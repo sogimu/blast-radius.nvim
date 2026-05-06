@@ -76,7 +76,6 @@ local function with_telescope(changes, files, opts)
   local pickers = require("telescope.pickers")
   local conf = require("telescope.config").values
   local finders = require("telescope.finders")
-  local sorters = require("telescope.sorters")
   local actions = require("telescope.actions")
   local action_state = require("telescope.actions.state")
 
