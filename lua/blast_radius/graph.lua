@@ -231,7 +231,6 @@ local function build_treesitter_includes_graph(bufnr, ignore_patterns, depth)
       if raw_path then
         local resolved = resolve_include_path(raw_path, filepath)
         if vim.fn.filereadable(resolved) ~= 0 then
-          table.insert(edges[filepath] or {}, resolved)
           if not edges[filepath] then edges[filepath] = {} end
           table.insert(edges[filepath], resolved)
           if add_file(resolved) then
@@ -244,7 +243,13 @@ local function build_treesitter_includes_graph(bufnr, ignore_patterns, depth)
 
   local src_bufname = vim.api.nvim_buf_get_name(bufnr)
   add_file(src_bufname)
+
+  vim.notify("blast-radius: scanning includes in " .. vim.fn.fnamemodify(src_bufname, ":."), vim.log.levels.INFO)
+  vim.notify("blast-radius: #lines=" .. vim.api.nvim_buf_line_count(bufnr), vim.log.levels.INFO)
+
   scan_file(src_bufname, 0)
+
+  vim.notify("blast-radius: found " .. #files .. " files via includes", vim.log.levels.INFO)
 
   return { files = files, edges = edges }
 end
