@@ -238,15 +238,16 @@ local function build_treesitter_includes_graph(bufnr, ignore_patterns)
     end
   end
 
-  local root = parser:parse()[1]:root()
-  for _, match, metadata in query:iter_matches(root, bufnr, 0, -1) do
-    for id, node in pairs(match) do
-      local name = query.captures[id]
-      if name == "include" then
-        local raw_path = vim.treesitter.get_node_text(node, bufnr)
-        local resolved = resolve_include_path(raw_path, src_bufname)
-        if vim.fn.filereadable(resolved) ~= 0 then
-          add_file(resolved)
+  for line_num = 0, vim.api.nvim_buf_line_count(bufnr) do
+    local line = vim.api.nvim_buf_get_lines(bufnr, line_num, line_num + 1, false)[1]
+    if not line then break end
+
+    local raw_path = line:match("#include%s*[\"<]([^\">]+)[\">]")
+    if raw_path then
+      local resolved = resolve_include_path(raw_path, src_bufname)
+      if vim.fn.filereadable(resolved) ~= 0 then
+        add_file(resolved)
+        if edges[src_bufname] then
           table.insert(edges[src_bufname], resolved)
         end
       end
