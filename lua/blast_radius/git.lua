@@ -47,6 +47,11 @@ local function make_file_lookup(rel_files)
 end
 
 function M.get_recent_changes(files, opts, callback)
+  vim.notify("blast-radius.nvim: git.get_recent_changes CALLED with " .. #files .. " files", vim.log.levels.INFO)
+  for i, f in ipairs(files) do
+    vim.notify("  file " .. i .. ": " .. f, vim.log.levels.INFO)
+  end
+
   opts = opts or {}
   local since_days = opts.git_since_days or 14
   local batch_size = opts.batch_size or 50
