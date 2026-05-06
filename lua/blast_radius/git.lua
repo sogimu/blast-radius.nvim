@@ -132,3 +132,5 @@ function M.get_recent_changes(files, opts, callback)
     end)
   end
 end
+
+return M
