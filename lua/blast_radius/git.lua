@@ -132,7 +132,11 @@ function M.get_recent_changes(files, opts, callback)
 
       local batch_changes = {}
       if result.stdout and result.stdout ~= "" then
-        local current_hash, current_date, current_author, current_msg
+        vim.notify("blast-radius.nvim: git stdout length: " .. #result.stdout, vim.log.levels.INFO)
+        local current_hash = nil
+        local current_date = nil
+        local current_author = nil
+        local current_msg = nil
 
         for line in result.stdout:gmatch("[^\r\n]+") do
           local h, d, a, m = line:match("^([0-9a-f]+)|([^|]+)|([^|]+)|(.+)$")
@@ -141,9 +145,11 @@ function M.get_recent_changes(files, opts, callback)
             current_date = d
             current_author = a
             current_msg = m
+            vim.notify("blast-radius.nvim: Found commit: " .. h .. " " .. (m or ""), vim.log.levels.INFO)
           elseif current_hash and line:match("^[AMDCR]\t") then
             local changed_file = line:match("^[AMDCR]\t(.+)$")
             if changed_file and file_lookup[changed_file] then
+              vim.notify("blast-radius.nvim: Matched: " .. changed_file, vim.log.levels.INFO)
               table.insert(batch_changes, {
                 file = changed_file,
                 hash = current_hash,
@@ -155,6 +161,7 @@ function M.get_recent_changes(files, opts, callback)
             end
           end
         end
+        vim.notify("blast-radius.nvim: batch_changes=" .. #batch_changes, vim.log.levels.INFO)
       end
 
       on_batch_done(nil, batch_changes)
