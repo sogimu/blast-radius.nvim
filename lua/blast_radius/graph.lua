@@ -47,45 +47,76 @@ local function build_lsp_graph(bufnr, symbol_name, depth, ignore_patterns, callb
   local edges = {}
   local visited = {}
 
-  local function traverse_calls(item, current_depth)
+  local function dedup()
+    local seen = {}
+    local result = {}
+    for _, f in ipairs(files) do
+      if not seen[f] then
+        seen[f] = true
+        table.insert(result, f)
+      end
+    end
+    return result
+  end
+
+  local function get_outgoing(item, current_depth, on_done)
     if current_depth > depth then
+      on_done()
       return
     end
 
-    if visited[item.uri] then
+    local uri = item.uri
+    if visited[uri] then
+      on_done()
       return
     end
-    visited[item.uri] = true
+    visited[uri] = true
 
-    local file_path = vim.uri_to_fname(item.uri)
+    local file_path = vim.uri_to_fname(uri)
 
     if check_ignore_pattern(file_path, ignore_patterns) then
+      on_done()
       return
     end
 
     table.insert(files, file_path)
-    edges[file_path] = {}
+    if not edges[file_path] then
+      edges[file_path] = {}
+    end
 
-    vim.lsp.buf_request(bufnr, "callHierarchy/outgoingCalls", { item = item }, function(err, result, ctx, _config)
-      if err or not result then
+    vim.lsp.buf_request(bufnr, "callHierarchy/outgoingCalls", { item = item }, function(err, result)
+      if err or not result or vim.tbl_isempty(result) then
+        on_done()
         return
       end
 
-      for _, call in ipairs(result) do
-        local target_path = vim.uri_to_fname(call.to.uri)
+      local pending = #result
+      if pending == 0 then
+        on_done()
+        return
+      end
 
+      local function handle_one(call)
+        local target_path = vim.uri_to_fname(call.to.uri)
         if not check_ignore_pattern(target_path, ignore_patterns) then
           table.insert(files, target_path)
-
-          if not edges[file_path] then
-            edges[file_path] = {}
-          end
           table.insert(edges[file_path], target_path)
-
-          if current_depth < depth and not visited[call.to.uri] then
-            traverse_calls(call.to, current_depth + 1)
-          end
         end
+
+        if current_depth < depth and not visited[call.to.uri] then
+          visited[call.to.uri] = true
+          get_outgoing(call.to, current_depth + 1, function()
+            pending = pending - 1
+            if pending == 0 then on_done() end
+          end)
+        else
+          pending = pending - 1
+          if pending == 0 then on_done() end
+        end
+      end
+
+      for _, call in ipairs(result) do
+        handle_one(call)
       end
     end)
   end
@@ -93,26 +124,15 @@ local function build_lsp_graph(bufnr, symbol_name, depth, ignore_patterns, callb
   vim.lsp.buf_request(bufnr, "textDocument/prepareCallHierarchy", {
     textDocument = vim.lsp.util.make_text_document_params(bufnr),
     position = vim.lsp.util.make_position_params(0, bufnr).position,
-  }, function(err, result, ctx, _config)
+  }, function(err, result)
     if err or not result or vim.tbl_isempty(result) then
       callback(nil)
       return
     end
 
-    traverse_calls(result[1], 0)
-
-    vim.defer_fn(function()
-      local deduped_files = {}
-      local seen = {}
-      for _, f in ipairs(files) do
-        if not seen[f] then
-          seen[f] = true
-          table.insert(deduped_files, f)
-        end
-      end
-
-      callback({ files = deduped_files, edges = edges })
-    end, 2000)
+    get_outgoing(result[1], 0, function()
+      callback({ files = dedup(), edges = edges })
+    end)
   end)
 end
 
