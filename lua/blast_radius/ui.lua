@@ -74,14 +74,13 @@ local function with_telescope(changes, files, opts)
   end
 
   local pickers = require("telescope.pickers")
-  local conf = require("telescope.config").values
   local finders = require("telescope.finders")
   local actions = require("telescope.actions")
   local action_state = require("telescope.actions.state")
 
   local tree = format_tree(changes, files)
 
-  pickers.new({
+  pickers.new({}, {
     prompt_title = "Blast Radius",
     finder = finders.new_table({
       results = tree,
@@ -93,7 +92,7 @@ local function with_telescope(changes, files, opts)
         }
       end,
     }),
-    sorter = conf.generic_sorter({}),
+    sorter = require("telescope.config").values.generic_sorter({}),
     attach_mappings = function(prompt_bufnr)
       actions.select_default:replace(function()
         local selection = action_state.get_selected_entry()
@@ -109,7 +108,7 @@ local function with_telescope(changes, files, opts)
       end)
       return true
     end,
-  }, conf.get_default()):find()
+  }):find()
 end
 
 local function with_snacks(changes, files, opts)
