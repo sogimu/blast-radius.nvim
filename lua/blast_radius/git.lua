@@ -2,9 +2,7 @@ local M = {}
 
 local function detect_tags(msg)
   local tags = {}
-  if not msg then
-    return tags
-  end
+  if not msg then return tags end
 
   local lower_msg = msg:lower()
 
@@ -21,37 +19,49 @@ local function detect_tags(msg)
   end
 
   local jira = msg:match("([A-Z]+%-%d+)")
-  if jira then
-    table.insert(tags, jira)
-  end
+  if jira then table.insert(tags, jira) end
 
   local github_issue = msg:match("#(%d+)")
-  if github_issue then
-    table.insert(tags, "#" .. github_issue)
-  end
+  if github_issue then table.insert(tags, "#" .. github_issue) end
 
   return tags
+end
+
+local function batch_files(files, batch_size)
+  local batches = {}
+  for i = 1, #files, batch_size do
+    table.insert(batches, {})
+    for j = i, math.min(i + batch_size - 1, #files) do
+      table.insert(batches[#batches], files[j])
+    end
+  end
+  return batches
+end
+
+local function make_file_lookup(rel_files)
+  local lookup = {}
+  for _, f in ipairs(rel_files) do
+    lookup[f] = true
+  end
+  return lookup
 end
 
 function M.get_recent_changes(files, opts, callback)
   opts = opts or {}
   local since_days = opts.git_since_days or 14
+  local batch_size = opts.batch_size or 50
 
   if vim.tbl_isempty(files) then
-    vim.schedule(function()
-      callback({})
-    end)
+    vim.schedule(function() callback({}) end)
     return
   end
 
   local since_str = string.format("%d days ago", since_days)
-
   local git_root = vim.fn.system({ "git", "rev-parse", "--show-toplevel" }):gsub("%s+", "")
+
   if git_root == "" then
     vim.notify("blast-radius.nvim: not in a git repo", vim.log.levels.WARN)
-    vim.schedule(function()
-      callback({})
-    end)
+    vim.schedule(function() callback({}) end)
     return
   end
 
@@ -66,29 +76,26 @@ function M.get_recent_changes(files, opts, callback)
 
   if vim.tbl_isempty(rel_files) then
     vim.notify("blast-radius.nvim: no files are inside git repo", vim.log.levels.WARN)
-    vim.schedule(function()
-      callback({})
-    end)
+    vim.schedule(function() callback({}) end)
     return
   end
 
   local all_changes = {}
-  local pending = #rel_files
-  local completed = false
-  local lock = {}
+  local batches = batch_files(rel_files, batch_size)
+  local pending = #batches
+  local file_lookup = make_file_lookup(rel_files)
 
-  local function on_file_done(rel_path, file_changes)
-    if lock[rel_path] then return end
-    lock[rel_path] = true
-
-    for _, entry in ipairs(file_changes or {}) do
-      table.insert(all_changes, entry)
+  local function on_batch_done(err, batch_changes)
+    if err then
+      vim.notify("blast-radius.nvim: git log error: " .. err, vim.log.levels.ERROR)
+    elseif batch_changes then
+      for _, entry in ipairs(batch_changes) do
+        table.insert(all_changes, entry)
+      end
     end
 
     pending = pending - 1
     if pending == 0 then
-      if completed then return end
-      completed = true
       local seen = {}
       local deduped = {}
       for _, c in ipairs(all_changes) do
@@ -98,51 +105,59 @@ function M.get_recent_changes(files, opts, callback)
           table.insert(deduped, c)
         end
       end
-      table.sort(deduped, function(a, b)
-        return a.date > b.date
-      end)
-      vim.schedule(function()
-        callback(deduped)
-      end)
+      table.sort(deduped, function(a, b) return a.date > b.date end)
+      vim.schedule(function() callback(deduped) end)
     end
   end
 
-  for _, rel in ipairs(rel_files) do
+  for _, batch in ipairs(batches) do
     local cmd = {
       "git",
       "log",
       "--since=" .. since_str,
       "--pretty=format:%h|%ad|%an|%s",
       "--date=short",
-      "--no-merges",
+      "--name-status",
       "--",
-      rel,
     }
+    for _, f in ipairs(batch) do
+      table.insert(cmd, f)
+    end
 
     vim.system(cmd, { cwd = git_root }, function(result)
       if result.code ~= 0 then
-        on_file_done(rel, {})
+        on_batch_done(result.stderr, nil)
         return
       end
 
-      local file_changes = {}
+      local batch_changes = {}
       if result.stdout and result.stdout ~= "" then
-        for line in result.stdout:gmatch("[^\n]+") do
-          local hash, date, author, msg = line:match("^([^|]+)|([^|]+)|([^|]+)|(.+)$")
-          if hash and date and author then
-            table.insert(file_changes, {
-              file = rel,
-              hash = hash,
-              date = date,
-              author = author,
-              msg = msg,
-              tags = detect_tags(msg),
-            })
+        local current_hash, current_date, current_author, current_msg
+
+        for line in result.stdout:gmatch("[^\r\n]+") do
+          local h, d, a, m = line:match("^([0-9a-f]+)|([^|]+)|([^|]+)|(.+)$")
+          if h then
+            current_hash = h
+            current_date = d
+            current_author = a
+            current_msg = m
+          elseif current_hash and line:match("^[AMDCR]\t") then
+            local changed_file = line:match("^[AMDCR]\t(.+)$")
+            if changed_file and file_lookup[changed_file] then
+              table.insert(batch_changes, {
+                file = changed_file,
+                hash = current_hash,
+                date = current_date,
+                author = current_author,
+                msg = current_msg or "",
+                tags = detect_tags(current_msg),
+              })
+            end
           end
         end
       end
 
-      on_file_done(rel, file_changes)
+      on_batch_done(nil, batch_changes)
     end)
   end
 end
