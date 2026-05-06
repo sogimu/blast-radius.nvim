@@ -94,7 +94,7 @@ local function with_telescope(changes, files, opts)
         }
       end,
     }),
-    sorter = sorters.get_generic_string_sorter(),
+    sorter = conf.generic_sorter({}),
     attach_mappings = function(prompt_bufnr)
       actions.select_default:replace(function()
         local selection = action_state.get_selected_entry()
