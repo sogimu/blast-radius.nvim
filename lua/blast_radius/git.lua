@@ -1,16 +1,5 @@
 local M = {}
 
-function M.batch_files(files, batch_size)
-  local batches = {}
-  for i = 1, #files, batch_size do
-    table.insert(batches, {})
-    for j = i, math.min(i + batch_size - 1, #files) do
-      table.insert(batches[#batches], files[j])
-    end
-  end
-  return batches
-end
-
 local function detect_tags(msg)
   local tags = {}
   if not msg then
@@ -47,40 +36,76 @@ end
 function M.get_recent_changes(files, opts, callback)
   opts = opts or {}
   local since_days = opts.git_since_days or 14
-  local batch_size = opts.batch_size or 50
 
   if vim.tbl_isempty(files) then
-    callback({})
+    vim.schedule(function()
+      callback({})
+    end)
     return
   end
 
   local since_str = string.format("%d days ago", since_days)
-  local changes = {}
-  local batches = M.batch_files(files, batch_size)
 
-  local pending = #batches
+  local git_root = vim.fn.system({ "git", "rev-parse", "--show-toplevel" }):gsub("%s+", "")
+  if git_root == "" then
+    vim.schedule(function()
+      callback({})
+    end)
+    return
+  end
 
-  local function on_batch_done(err, batch_changes)
-    if err then
-      vim.notify("blast-radius.nvim: git log error: " .. err, vim.log.levels.ERROR)
-    elseif batch_changes then
-      for _, entry in ipairs(batch_changes) do
-        table.insert(changes, entry)
-      end
+  local rel_files = {}
+  for _, f in ipairs(files) do
+    local abs = vim.fn.fnamemodify(f, ":p")
+    if abs:sub(1, #git_root) == git_root then
+      local rel = abs:sub(#git_root + 2)
+      table.insert(rel_files, rel)
+    end
+  end
+
+  if vim.tbl_isempty(rel_files) then
+    vim.schedule(function()
+      callback({})
+    end)
+    return
+  end
+
+  local all_changes = {}
+  local pending = #rel_files
+  local completed = false
+  local lock = {}
+
+  local function on_file_done(rel_path, file_changes)
+    if lock[rel_path] then return end
+    lock[rel_path] = true
+
+    for _, entry in ipairs(file_changes or {}) do
+      table.insert(all_changes, entry)
     end
 
     pending = pending - 1
     if pending == 0 then
-      table.sort(changes, function(a, b)
+      if completed then return end
+      completed = true
+      local seen = {}
+      local deduped = {}
+      for _, c in ipairs(all_changes) do
+        local key = c.hash .. "|" .. c.file
+        if not seen[key] then
+          seen[key] = true
+          table.insert(deduped, c)
+        end
+      end
+      table.sort(deduped, function(a, b)
         return a.date > b.date
       end)
       vim.schedule(function()
-        callback(changes)
+        callback(deduped)
       end)
     end
   end
 
-  for _, batch in ipairs(batches) do
+   for _, rel in ipairs(rel_files) do
     local cmd = {
       "git",
       "log",
@@ -88,38 +113,22 @@ function M.get_recent_changes(files, opts, callback)
       "--pretty=format:%h|%ad|%an|%s",
       "--date=short",
       "--",
+      rel,
     }
 
-    for _, f in ipairs(batch) do
-      local git_relative = vim.fn.system({ "git", "rev-parse", "--show-prefix" }):gsub("%s+", "")
-      if git_relative ~= "" then
-        local abs = vim.fn.fnamemodify(f, ":p")
-        local root = vim.fn.system({ "git", "rev-parse", "--show-toplevel" }):gsub("%s+", "")
-        if abs:sub(1, #root) == root then
-          f = abs:sub(#root + 2)
-        end
-      end
-      table.insert(cmd, f)
-    end
-
-    vim.system(cmd, {}, function(result)
+    vim.system(cmd, { cwd = git_root }, function(result)
       if result.code ~= 0 then
-        on_batch_done(result.stderr, nil)
+        on_file_done(rel, {})
         return
       end
 
-      local batch_changes = {}
+      local file_changes = {}
       if result.stdout and result.stdout ~= "" then
         for line in result.stdout:gmatch("[^\r\n]+") do
           local hash, date, author, msg = line:match("^([^|]+)|([^|]+)|([^|]+)|(.+)$")
-          if hash and date and author then
-            local affected_files = {}
-            for _, f in ipairs(batch) do
-              table.insert(affected_files, f)
-            end
-
-            table.insert(batch_changes, {
-              file = affected_files[1] or "unknown",
+          if hash then
+            table.insert(file_changes, {
+              file = rel,
               hash = hash,
               date = date,
               author = author,
@@ -130,7 +139,47 @@ function M.get_recent_changes(files, opts, callback)
         end
       end
 
-      on_batch_done(nil, batch_changes)
+      on_file_done(rel, file_changes)
+    end)
+  end
+end
+
+      if not result.stdout or result.stdout == "" then
+        on_file_done(rel, {})
+        return
+      end
+
+      local file_changes = {}
+      local current_hash = nil
+      local current_date = nil
+      local current_author = nil
+      local current_msg = nil
+
+      for line in result.stdout:gmatch("[^\r\n]+") do
+        if line:match("^commit ") then
+          local hash, date, author, msg = line:match("^commit (%w+)|([^|]+)|([^|]+)|(.+)$")
+          if hash then
+            current_hash = hash
+            current_date = date
+            current_author = author
+            current_msg = msg
+          end
+        elseif line:match("^[AMDCR]") then
+          local _action, changed_file = line:match("^([AMDCR])\t(.+)$")
+          if changed_file == rel and current_hash then
+            table.insert(file_changes, {
+              file = rel,
+              hash = current_hash:sub(1, 7),
+              date = current_date,
+              author = current_author,
+              msg = current_msg or "",
+              tags = detect_tags(current_msg),
+            })
+          end
+        end
+      end
+
+      on_file_done(rel, file_changes)
     end)
   end
 end
