@@ -48,6 +48,7 @@ function M.get_recent_changes(files, opts, callback)
 
   local git_root = vim.fn.system({ "git", "rev-parse", "--show-toplevel" }):gsub("%s+", "")
   if git_root == "" then
+    vim.notify("blast-radius.nvim: not in a git repo", vim.log.levels.WARN)
     vim.schedule(function()
       callback({})
     end)
@@ -64,6 +65,7 @@ function M.get_recent_changes(files, opts, callback)
   end
 
   if vim.tbl_isempty(rel_files) then
+    vim.notify("blast-radius.nvim: no files are inside git repo", vim.log.levels.WARN)
     vim.schedule(function()
       callback({})
     end)
@@ -105,13 +107,14 @@ function M.get_recent_changes(files, opts, callback)
     end
   end
 
-   for _, rel in ipairs(rel_files) do
+  for _, rel in ipairs(rel_files) do
     local cmd = {
       "git",
       "log",
       "--since=" .. since_str,
       "--pretty=format:%h|%ad|%an|%s",
       "--date=short",
+      "--no-merges",
       "--",
       rel,
     }
@@ -124,15 +127,15 @@ function M.get_recent_changes(files, opts, callback)
 
       local file_changes = {}
       if result.stdout and result.stdout ~= "" then
-        for line in result.stdout:gmatch("[^\r\n]+") do
+        for line in result.stdout:gmatch("[^\n]+") do
           local hash, date, author, msg = line:match("^([^|]+)|([^|]+)|([^|]+)|(.+)$")
-          if hash then
+          if hash and date and author then
             table.insert(file_changes, {
               file = rel,
               hash = hash,
               date = date,
               author = author,
-              msg = msg or "",
+              msg = msg,
               tags = detect_tags(msg),
             })
           end

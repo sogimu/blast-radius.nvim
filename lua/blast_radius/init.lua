@@ -34,11 +34,16 @@ function M.run(opts)
   local graph_cache_key = "graph:" .. vim.fn.sha256(bufname .. cursor)
   local cached_graph = cache.get(graph_cache_key)
 
+  local git_root = vim.fn.system({ "git", "rev-parse", "--show-toplevel" }):gsub("%s+", "")
+  
   local function proceed_with_graph(graph_result)
     if not graph_result or #graph_result.files == 0 then
       vim.notify("blast-radius.nvim: no dependencies found", vim.log.levels.INFO)
       return
     end
+
+    local n = #graph_result.files
+    vim.notify(string.format("blast-radius.nvim: found %d file(s) | git root: %s", n, git_root ~= "" and git_root or "n/a"), vim.log.levels.INFO)
 
     local files_str = table.concat(graph_result.files, "\n")
     local git_cache_key = "git:" .. vim.fn.sha256(files_str)
