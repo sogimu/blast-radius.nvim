@@ -197,62 +197,54 @@ local function resolve_include_path(include_text, src_bufname)
   return local_path
 end
 
-local function build_treesitter_includes_graph(bufnr, ignore_patterns)
+local function build_treesitter_includes_graph(bufnr, ignore_patterns, depth)
+  depth = depth or 3
   local files = {}
   local edges = {}
-  local src_bufname = vim.api.nvim_buf_get_name(bufnr)
+  local visited = {}
 
   local function add_file(path)
-    if not path or path == "" then return end
-    if check_ignore_pattern(path, ignore_patterns) then return end
-    for _, f in ipairs(files) do
-      if f == path then return end
-    end
+    if not path or path == "" then return false end
+    if check_ignore_pattern(path, ignore_patterns) then return false end
+    if visited[path] then return false end
+    visited[path] = true
     table.insert(files, path)
-    if not edges[path] then
-      edges[path] = {}
+    if not edges[path] then edges[path] = {} end
+    return true
+  end
+
+  local function scan_file(filepath, current_depth)
+    if current_depth > depth then return end
+
+    local lines
+    if vim.fn.bufloaded(filepath) ~= 0 then
+      local fbufnr = vim.fn.bufnr(filepath)
+      lines = vim.api.nvim_buf_get_lines(fbufnr, 0, -1, false)
+    else
+      lines = vim.fn.readfile(filepath)
     end
-  end
 
-  add_file(src_bufname)
+    if not lines then return end
 
-  local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
-  if not ok or not parser then
-    return { files = files, edges = edges }
-  end
-
-  local query_str = [[
-    (preproc_include
-      path: (system_lib_string) @include
-    )
-    (preproc_include
-      path: (string_literal) @include
-    )
-  ]]
-
-  local ok_parse, query = pcall(vim.treesitter.query.parse, "cpp", query_str)
-  if not ok_parse or not query then
-    ok_parse, query = pcall(vim.treesitter.query.parse, "c", query_str)
-    if not ok_parse or not query then
-      return { files = files, edges = edges }
-    end
-  end
-
-  for line_num = 0, vim.api.nvim_buf_line_count(bufnr) do
-    local line = vim.api.nvim_buf_get_lines(bufnr, line_num, line_num + 1, false)[1]
-    if not line then break end
-
-    local raw_path = line:match("#include%s*[\"<]([^\">]+)[\">]")
-    if raw_path then
-      local resolved = resolve_include_path(raw_path, src_bufname)
-      if vim.fn.filereadable(resolved) ~= 0 then
-        add_file(resolved)
-        if edges[src_bufname] then
-          table.insert(edges[src_bufname], resolved)
+    for _, line in ipairs(lines) do
+      local raw_path = line:match("#include%s*[\"<]([^\">]+)[\">]")
+      if raw_path then
+        local resolved = resolve_include_path(raw_path, filepath)
+        if vim.fn.filereadable(resolved) ~= 0 then
+          table.insert(edges[filepath] or {}, resolved)
+          if not edges[filepath] then edges[filepath] = {} end
+          table.insert(edges[filepath], resolved)
+          if add_file(resolved) then
+            scan_file(resolved, current_depth + 1)
+          end
         end
       end
     end
   end
+
+  local src_bufname = vim.api.nvim_buf_get_name(bufnr)
+  add_file(src_bufname)
+  scan_file(src_bufname, 0)
 
   return { files = files, edges = edges }
 end
@@ -273,7 +265,7 @@ function M.build_from_cursor(bufnr, opts, callback)
       if result and #result.files > 0 then
         callback(result)
       elseif fallback_no_lsp then
-        local ts_result = build_treesitter_includes_graph(bufnr, ignore_patterns)
+        local ts_result = build_treesitter_includes_graph(bufnr, ignore_patterns, depth)
         callback(ts_result)
       else
         callback({ files = {}, edges = {} })
@@ -307,7 +299,7 @@ function M.build_from_cursor(bufnr, opts, callback)
     end)
   else
     if fallback_no_lsp then
-      local ts_result = build_treesitter_includes_graph(bufnr, ignore_patterns)
+      local ts_result = build_treesitter_includes_graph(bufnr, ignore_patterns, depth)
       callback(ts_result)
     else
       vim.notify("blast-radius.nvim: LSP not available and fallback disabled", vim.log.levels.WARN)

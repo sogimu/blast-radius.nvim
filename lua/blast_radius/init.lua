@@ -44,9 +44,7 @@ function M.run(opts)
     local git_cache_key = "git:" .. vim.fn.sha256(files_str)
     local cached_git = cache.get(git_cache_key)
 
-    vim.notify("blast-radius.nvim: proceed_with_graph | files=" .. #graph_result.files .. " | cached_git=" .. (cached_git and #cached_git or "nil"), vim.log.levels.INFO)
-
-    if cached_git then
+    if cached_git and #cached_git > 0 then
       ui.render(cached_git, graph_result.files, cfg)
     else
       git.get_recent_changes(graph_result.files, cfg, function(changes)
