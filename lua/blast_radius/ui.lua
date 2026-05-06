@@ -1,25 +1,5 @@
 local M = {}
 
-local function format_entry(entry)
-  local tags_str = ""
-  if entry.tags and #entry.tags > 0 then
-    local tag_parts = {}
-    for _, tag in ipairs(entry.tags) do
-      table.insert(tag_parts, tostring(tag))
-    end
-    tags_str = " [" .. table.concat(tag_parts, ", ") .. "]"
-  end
-
-  return string.format(
-    "%s | %s | %s | %s%s",
-    entry.file,
-    entry.date or "unknown",
-    entry.author or "unknown",
-    entry.msg or "",
-    tags_str
-  )
-end
-
 local function group_by_file(changes)
   local grouped = {}
   for _, entry in ipairs(changes) do
@@ -47,11 +27,12 @@ local function format_tree(changes, files)
           prefix = "  ├─"
         end
         local detail = string.format(
-          "%s 🔄 %s | %s | %s%s",
+          "%s 🔄 %s | %s | %s | %s%s",
           prefix,
           entry.hash,
           entry.date,
           entry.author,
+          entry.msg or "",
           (#entry.tags > 0 and (" [" .. table.concat(entry.tags, ", ") .. "]") or "")
         )
         table.insert(lines, { display = detail, file = file, hash = entry.hash, entry = entry })
@@ -66,6 +47,15 @@ local function format_tree(changes, files)
   return lines
 end
 
+local function open_item(item)
+  if not item then return end
+  if item.hash and item.file then
+    vim.cmd("DiffviewFileHistory " .. item.file)
+  elseif item.file then
+    vim.cmd("edit " .. item.file)
+  end
+end
+
 local function with_telescope(changes, files, opts)
   local ok = pcall(require, "telescope.pickers")
   if not ok then
@@ -75,6 +65,7 @@ local function with_telescope(changes, files, opts)
 
   local pickers = require("telescope.pickers")
   local finders = require("telescope.finders")
+  local conf = require("telescope.config").values
   local actions = require("telescope.actions")
   local action_state = require("telescope.actions.state")
 
@@ -92,19 +83,12 @@ local function with_telescope(changes, files, opts)
         }
       end,
     }),
-    sorter = require("telescope.config").values.generic_sorter({}),
+    sorter = conf.generic_sorter({}),
     attach_mappings = function(prompt_bufnr)
       actions.select_default:replace(function()
         local selection = action_state.get_selected_entry()
         actions.close(prompt_bufnr)
-        if selection then
-          local value = selection.value
-          if value.hash then
-            vim.cmd("DiffviewFileHistory " .. value.file)
-          elseif value.file then
-            vim.cmd("edit " .. value.file)
-          end
-        end
+        open_item(selection and selection.value)
       end)
       return true
     end,
@@ -128,11 +112,7 @@ local function with_snacks(changes, files, opts)
       return item.display
     end,
     confirm = function(item)
-      if item.hash then
-        vim.cmd("DiffviewFileHistory " .. item.file)
-      elseif item.file then
-        vim.cmd("edit " .. item.file)
-      end
+      open_item(item)
     end,
   })
 end
@@ -140,20 +120,17 @@ end
 local function with_vim_select(changes, files, opts)
   local tree = format_tree(changes, files)
 
-  vim.ui.select(tree, {
-    prompt = "Blast Radius:",
-    format_item = function(item)
-      return item.display
-    end,
-  }, function(item)
-    if item then
-      if item.hash then
-        vim.cmd("DiffviewFileHistory " .. item.file)
-      elseif item.file then
-        vim.cmd("edit " .. item.file)
-      end
+  vim.ui.select(
+    tree,
+    {
+      format_item = function(item)
+        return item.display
+      end,
+    },
+    function(item)
+      open_item(item)
     end
-  end)
+  )
 end
 
 function M.render(changes, files, opts)
