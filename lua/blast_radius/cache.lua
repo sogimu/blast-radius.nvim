@@ -113,7 +113,7 @@ function M.invalidate(bufnr)
   end
 
   for _, entry in ipairs(files) do
-    if entry.name:ends_with(".json") then
+    if entry.name:match("%.json$") then
       local full_path = cache_dir .. "/" .. entry.name
       local ok, content = pcall(vim.fn.readfile, full_path)
       if ok and content then
