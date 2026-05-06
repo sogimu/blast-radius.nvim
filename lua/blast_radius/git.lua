@@ -144,44 +144,4 @@ function M.get_recent_changes(files, opts, callback)
   end
 end
 
-      if not result.stdout or result.stdout == "" then
-        on_file_done(rel, {})
-        return
-      end
-
-      local file_changes = {}
-      local current_hash = nil
-      local current_date = nil
-      local current_author = nil
-      local current_msg = nil
-
-      for line in result.stdout:gmatch("[^\r\n]+") do
-        if line:match("^commit ") then
-          local hash, date, author, msg = line:match("^commit (%w+)|([^|]+)|([^|]+)|(.+)$")
-          if hash then
-            current_hash = hash
-            current_date = date
-            current_author = author
-            current_msg = msg
-          end
-        elseif line:match("^[AMDCR]") then
-          local _action, changed_file = line:match("^([AMDCR])\t(.+)$")
-          if changed_file == rel and current_hash then
-            table.insert(file_changes, {
-              file = rel,
-              hash = current_hash:sub(1, 7),
-              date = current_date,
-              author = current_author,
-              msg = current_msg or "",
-              tags = detect_tags(current_msg),
-            })
-          end
-        end
-      end
-
-      on_file_done(rel, file_changes)
-    end)
-  end
-end
-
 return M
