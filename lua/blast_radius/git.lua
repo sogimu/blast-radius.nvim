@@ -74,7 +74,9 @@ function M.get_recent_changes(files, opts, callback)
       table.sort(changes, function(a, b)
         return a.date > b.date
       end)
-      callback(changes)
+      vim.schedule(function()
+        callback(changes)
+      end)
     end
   end
 
