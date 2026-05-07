@@ -1,2 +1,5 @@
 (preproc_include
-  path: (string_literal) @include_path)
+  path: [
+    (string_literal)
+    (system_lib_string)
+  ] @include_path)

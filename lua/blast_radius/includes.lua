@@ -33,6 +33,7 @@ function M.parse_includes(bufnr, lang)
 
   local ok_parser, parser = pcall(vim.treesitter.get_parser, bufnr)
   if not ok_parser or not parser then
+    vim.print("[blast-radius:includes] Treesitter parser unavailable for bufnr: " .. bufnr)
     return {}
   end
 
@@ -66,6 +67,7 @@ function M.parse_includes(bufnr, lang)
 
   local ok_query, ts_query = pcall(vim.treesitter.query.parse, lang, query_str)
   if not ok_query or not ts_query then
+    vim.print("[blast-radius:includes] Query parse failed for lang: " .. lang)
     return {}
   end
 
@@ -81,6 +83,8 @@ function M.parse_includes(bufnr, lang)
       table.insert(includes, text)
     end
   end
+
+  vim.print("[blast-radius:includes] Parsed " .. #includes .. " includes: " .. vim.inspect(includes))
 
   return includes
 end
