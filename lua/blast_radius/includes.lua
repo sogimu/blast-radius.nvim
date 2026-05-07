@@ -285,22 +285,6 @@ local function traverse_includes(file, ctx)
       end
     end
   end
-    end
-  end
-  dlog("traverse_includes: resolved " .. resolved_count .. "/" .. total .. " includes")
-
-  -- Recurse into resolved includes
-  local idx = 0
-  for _, resolved in ipairs(resolved_list) do
-    if ctx.visited[resolved] and resolved ~= file then
-      goto continue_recurse
-    end
-    idx = idx + 1
-    if idx <= ctx.batch_size then
-      traverse_includes(resolved, ctx)
-    end
-    ::continue_recurse::
-  end
 
   ctx.depth = ctx.depth - 1
 end

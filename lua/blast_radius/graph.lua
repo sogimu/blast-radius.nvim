@@ -310,32 +310,25 @@ function M.build_from_cursor(opts, callback)
 
   if not symbol_name or not position then
     dlog("build_from_cursor: no symbol/position found, falling back to includes")
-    vim.print("[blast-radius] No symbol found, falling back to include-based detection")
-    local ok, includes = pcall(require, "blast_radius.includes")
-    if ok and includes then
-      if includes.build_from_file then
-        includes.build_from_file(root_file, opts, callback)
-      elseif includes.build_from_cursor then
-        includes.build_from_cursor(opts, callback)
-      else
-        utils.stats.stop("build_from_cursor")
-        callback {
-          files = { root_file },
-          edges = {},
-          root_symbol = "",
-          root_file = root_file,
-        }
-      end
+    vim.print("[blast-radius.graph] Falling back to includes, root_file=" .. root_file)
+    local ok, inc_mod = pcall(require, "blast_radius.includes")
+    vim.print("[blast-radius.graph] includes pcall: ok=" .. tostring(ok))
+    if ok and inc_mod and inc_mod.build_from_file then
+      vim.print("[blast-radius.graph] Calling includes.build_from_file(" .. root_file .. ")")
+      dlog("build_from_cursor: calling includes.build_from_file(" .. root_file .. ")")
+      inc_mod.build_from_file(root_file, opts, callback)
+      return
     else
-      vim.print("[blast-radius] Includes module failed to load")
-      utils.stats.stop("build_from_cursor")
-      callback {
-        files = { root_file },
-        edges = {},
-        root_symbol = "",
-        root_file = root_file,
-      }
+      vim.print("[blast-radius.graph] includes not available - ok=" .. tostring(ok) .. (ok and " has_build_from_file=" .. tostring(inc_mod and inc_mod.build_from_file ~= nil) or ""))
     end
+
+    utils.stats.stop("build_from_cursor")
+    callback {
+      files = { root_file },
+      edges = {},
+      root_symbol = "",
+      root_file = root_file,
+    }
     return
   end
 
