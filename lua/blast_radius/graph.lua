@@ -3,6 +3,15 @@ local config = require("blast_radius.config")
 
 local M = {}
 
+local DEBUG_LOG = "/tmp/blast-radius-debug.log"
+local function dlog(msg)
+  local f = io.open(DEBUG_LOG, "a")
+  if f then
+    f:write(os.date("[%H:%M:%S] ") .. msg .. "\n")
+    f:close()
+  end
+end
+
 --- Check if any attached LSP client supports call hierarchy
 --- @param bufnr? number
 --- @return boolean
@@ -10,12 +19,18 @@ function M.has_call_hierarchy_support(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
 
   local clients = vim.lsp.get_clients({ bufnr = bufnr })
+  dlog("has_call_hierarchy_support: found #" .. #clients .. " clients for bufnr " .. bufnr)
   for _, client in ipairs(clients) do
+    local name = client.name or "<unnamed>"
+    local has = client.server_capabilities and client.server_capabilities.callHierarchyProvider
+    dlog("has_call_hierarchy_support: client=" .. name .. " callHierarchyProvider=" .. tostring(has))
     if client.server_capabilities and client.server_capabilities.callHierarchyProvider then
+      dlog("has_call_hierarchy_support: returning true (capable client=" .. name .. ")")
       return true
     end
   end
 
+  dlog("has_call_hierarchy_support: no capable client found, returning false")
   return false
 end
 
@@ -33,24 +48,29 @@ function M.get_symbol_at_cursor(bufnr)
 
   local ok_parser, parser = pcall(vim.treesitter.get_parser, bufnr)
   if not ok_parser or not parser then
+    dlog("get_symbol_at_cursor: parser not found for bufnr " .. bufnr)
     return nil, nil
   end
 
   local ok_node, node = pcall(vim.treesitter.get_node, { pos = { row, col }, bufnr = bufnr })
   while (ok_node and node) do
     local text = vim.treesitter.get_node_text(node, bufnr)
+    dlog("get_symbol_at_cursor: node text=" .. tostring(text))
     if text and text ~= "" and text:match("^[%w_]+$") then
       local start_row, start_col, _, _ = node:range()
+      dlog("get_symbol_at_cursor: found valid symbol=" .. text)
       return text, { buf = bufnr, line = start_row, col = start_col }
     end
 
     local parent = node:parent()
     if not parent then
+      dlog("get_symbol_at_cursor: no parent node, stopping walk")
       break
     end
     node = parent
   end
 
+  dlog("get_symbol_at_cursor: no valid symbol found, returning nil")
   return nil, nil
 end
 
@@ -68,6 +88,7 @@ function M.lsp_request_async(method, params, opts)
       return
     end
     done = true
+    dlog("lsp_request_async: on_done called, err=" .. (err and err.message or "nil"))
     if timer then
       timer:stop()
       timer:close()
@@ -80,13 +101,16 @@ function M.lsp_request_async(method, params, opts)
       return
     end
     done = true
+    dlog("lsp_request_async: timeout reached after " .. timeout_ms .. "ms")
     vim.schedule(function()
       opts.on_done(nil, { message = "request_timeout" })
     end)
   end, timeout_ms)
 
   local clients = vim.lsp.get_clients { bufnr = vim.api.nvim_get_current_buf() }
+  dlog("lsp_request_async: found #" .. #clients .. " clients, method=" .. method)
   if #clients == 0 then
+    dlog("lsp_request_async: no clients found, scheduling on_done with no_lsp_client error")
     vim.schedule(function()
       opts.on_done(nil, { message = "no_lsp_client" })
     end)
@@ -96,19 +120,26 @@ function M.lsp_request_async(method, params, opts)
 
   local active_requests = 0
   for _, client in ipairs(clients) do
+    local name = client.name or "<unnamed>"
+    local capable = client.server_capabilities and (client.server_capabilities.callHierarchyProvider or method ~= "callHierarchy/incomingCalls")
+    dlog("lsp_request_async: client=" .. name .. " capable=" .. tostring(capable))
     if client.server_capabilities and (client.server_capabilities.callHierarchyProvider or method ~= "callHierarchy/incomingCalls") then
       active_requests = active_requests + 1
       local ok_req, req_err = pcall(function()
+        dlog("lsp_request_async: requesting method=" .. method .. " from client=" .. name)
         client:request(method, params, result_callback)
       end)
       if not ok_req then
+        dlog("lsp_request_async: pcall failed for client=" .. name .. " err=" .. tostring(req_err))
         active_requests = active_requests - 1
         result_callback(nil, { message = req_err })
       end
     end
   end
 
+  dlog("lsp_request_async: active_requests=" .. active_requests)
   if active_requests == 0 then
+    dlog("lsp_request_async: no capable client found, scheduling on_done with no_capable_client error")
     vim.schedule(function()
       opts.on_done(nil, { message = "no_capable_client" })
     end)
@@ -150,16 +181,19 @@ end
 --- @param ctx { files: table<string, boolean>, edges: table<string, string[]>, visited: table<string, boolean>, depth: number, start_time_sec: number, ignore_patterns: string[], max_depth: number, max_traversal_time_sec: number }
 --- @param callback function() Called when traversal is complete
 local function traverse_incoming_calls(root_item, ctx, callback)
+  dlog("traverse_incoming_calls: entry, depth=" .. ctx.depth .. " item=" .. (root_item.name or "<anonymous>"))
   utils.stats.start("traverse_incoming")
 
   local elapsed_sec = (vim.loop.hrtime() / 1e9) - ctx.start_time_sec
   if ctx.max_traversal_time_sec and elapsed_sec >= ctx.max_traversal_time_sec then
+    dlog("traverse_incoming_calls: max traversal time reached, elapsed=" .. string.format("%.2f", elapsed_sec) .. "s")
     utils.stats.stop("traverse_incoming")
     callback()
     return
   end
 
   if ctx.depth > ctx.max_depth then
+    dlog("traverse_incoming_calls: max depth reached, depth=" .. ctx.depth .. " max=" .. ctx.max_depth)
     utils.stats.stop("traverse_incoming")
     callback()
     return
@@ -170,6 +204,7 @@ local function traverse_incoming_calls(root_item, ctx, callback)
   local root_key = make_visited_key { from = root_item }
   if root_key ~= "" then
     if ctx.visited[root_key] then
+      dlog("traverse_incoming_calls: cycle detected, key=" .. root_key)
       ctx.depth = ctx.depth - 1
       utils.stats.stop("traverse_incoming")
       callback()
@@ -190,20 +225,24 @@ local function traverse_incoming_calls(root_item, ctx, callback)
 
   M.lsp_request_async("callHierarchy/incomingCalls", params, {
     timeout_ms = (config.current and config.current.git.timeout) or 30000,
-    on_done = function(result, err)
-      if err then
-        ctx.depth = ctx.depth - 1
-        utils.stats.stop("traverse_incoming")
-        callback()
-        return
-      end
+      on_done = function(result, err)
+        if err then
+          dlog("traverse_incoming_calls: LSP error=" .. (err.message or "unknown"))
+          ctx.depth = ctx.depth - 1
+          utils.stats.stop("traverse_incoming")
+          callback()
+          return
+        end
 
-      if not result or #result == 0 then
-        ctx.depth = ctx.depth - 1
-        utils.stats.stop("traverse_incoming")
-        callback()
-        return
-      end
+        if not result or #result == 0 then
+          dlog("traverse_incoming_calls: no incoming calls returned for " .. (root_item.name or "<anonymous>"))
+          ctx.depth = ctx.depth - 1
+          utils.stats.stop("traverse_incoming")
+          callback()
+          return
+        end
+
+        dlog("traverse_incoming_calls: processing #" .. #result .. " incoming calls for " .. (root_item.name or "<anonymous>"))
 
       local from_uri = root_uri
       local from_key = from_uri or ""
@@ -262,11 +301,15 @@ function M.build_from_cursor(opts, callback)
   local symbol_name, position = M.get_symbol_at_cursor(bufnr)
   local root_file = vim.api.nvim_buf_get_name(bufnr)
 
+  dlog("build_from_cursor: symbol_name=" .. tostring(symbol_name) .. " position=" .. tostring(position))
+
   -- Check LSP support
   local has_ch = M.has_call_hierarchy_support(bufnr)
+  dlog("build_from_cursor: has_call_hierarchy_support=" .. tostring(has_ch))
   vim.print("[blast-radius] LSP callHierarchy: " .. (has_ch and "yes" or "no") .. ", symbol: " .. (symbol_name or "<none>"))
 
   if not symbol_name or not position then
+    dlog("build_from_cursor: no symbol/position found, returning current file only")
     vim.print("[blast-radius] Fallback failed, returning current file only: " .. root_file)
     utils.stats.stop("build_from_cursor")
     callback {
@@ -289,6 +332,7 @@ function M.build_from_cursor(opts, callback)
   M.lsp_request_async("textDocument/prepareCallHierarchy", params, {
     on_done = function(result, err)
       if err or not result or #result == 0 then
+        dlog("build_from_cursor: LSP prepareCallHierarchy returned no result, err=" .. (err and err.message or "nil"))
         vim.print("[blast-radius] LSP returned no call hierarchy, falling back to includes")
         -- Fallback to includes-based detection
         local ok, includes = pcall(require, "blast_radius.includes")

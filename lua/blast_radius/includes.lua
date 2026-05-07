@@ -40,12 +40,16 @@ function M.parse_includes(bufnr, lang)
   local query_str
   local plugin_root = debug.getinfo(1, "S").source:sub(2):match("(.*)/lua/.*"):gsub("/blast_radius$", "")
   local query_path = plugin_root .. "/queries/" .. lang .. "/" .. query_file .. ".scm"
+  vim.print("[includes] plugin_root: " .. plugin_root .. " query_path: " .. query_path)
+  io.open("/tmp/blast-radius.log", "a"):write("[includes] query_path: " .. query_path .. "\n")
 
   local f = io.open(query_path, "r")
   if f then
     query_str = f:read("*all")
     f:close()
+    vim.print("[includes] Query loaded from file: " .. query_path)
   else
+    vim.print("[includes] Query file NOT found: " .. query_path)
     local ok_query, ts_query = pcall(vim.treesitter.query.parse, lang, query_file)
     if ok_query and ts_query then
       local tree = parser:parse()[1]
@@ -60,6 +64,7 @@ function M.parse_includes(bufnr, lang)
           table.insert(includes, text)
         end
       end
+      vim.print("[includes] Parsed " .. #includes .. " includes: " .. vim.inspect(includes))
       return includes
     end
     return {}
@@ -84,7 +89,7 @@ function M.parse_includes(bufnr, lang)
     end
   end
 
-  vim.print("[blast-radius:includes] Parsed " .. #includes .. " includes: " .. vim.inspect(includes))
+  vim.print("[includes] Parsed " .. #includes .. " includes: " .. vim.inspect(includes))
 
   return includes
 end
