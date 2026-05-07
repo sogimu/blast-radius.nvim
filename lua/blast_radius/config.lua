@@ -64,33 +64,22 @@ M.current = nil
 --- @return string? error_message
 function M.validate(cfg)
   local ok, err = pcall(function()
-    vim.validate {
-      enabled = { cfg.enabled, "boolean" },
-      git = { cfg.git, "table" },
-      display = { cfg.display, "table" },
-      virtual_overrides = { cfg.virtual_overrides, "table" },
-      log_level = { cfg.log_level, "string" },
-    }
+    vim.validate("enabled", cfg.enabled, "boolean", true)
+    vim.validate("git", cfg.git, "table", true)
+    vim.validate("display", cfg.display, "table", true)
+    vim.validate("virtual_overrides", cfg.virtual_overrides, "table", true)
+    vim.validate("log_level", cfg.log_level, "string", true)
 
-    -- Validate nested git table
-    vim.validate {
-      batch_size = { cfg.git.batch_size, { "number", "nil" } },
-      timeout = { cfg.git.timeout, "number" },
-      exclude_patterns = { cfg.git.exclude_patterns, "table" },
-    }
+    vim.validate("git.batch_size", cfg.git.batch_size, { "number", "nil" }, true)
+    vim.validate("git.timeout", cfg.git.timeout, "number", true)
+    vim.validate("git.exclude_patterns", cfg.git.exclude_patterns, "table", true)
 
-    -- Validate nested display table
-    vim.validate {
-      show_virtual_text = { cfg.display.show_virtual_text, "boolean" },
-      virtual_text_priority = { cfg.display.virtual_text_priority, "number" },
-      namespace = { cfg.display.namespace, "string" },
-    }
+    vim.validate("display.show_virtual_text", cfg.display.show_virtual_text, "boolean", true)
+    vim.validate("display.virtual_text_priority", cfg.display.virtual_text_priority, "number", true)
+    vim.validate("display.namespace", cfg.display.namespace, "string", true)
 
-    -- Validate cache settings
-    vim.validate {
-      cache_ttl = { cfg.cache_ttl, "number" },
-      max_cache_size_mb = { cfg.max_cache_size_mb, "number" },
-    }
+    vim.validate("cache_ttl", cfg.cache_ttl, "number", true)
+    vim.validate("max_cache_size_mb", cfg.max_cache_size_mb, "number", true)
 
     -- Validate ui_provider
     local valid_providers = { auto = true, telescope = true, snacks = true, select = true }
@@ -106,10 +95,8 @@ function M.validate(cfg)
       if type(override) ~= "table" then
         error(string.format("virtual_overrides[%q] must be table, got %s", pattern, type(override)))
       end
-      vim.validate {
-        text = { override.text, "string" },
-        hl_group = { override.hl_group, "string" },
-      }
+      vim.validate("virtual_overrides.text", override.text, "string", true)
+      vim.validate("virtual_overrides.hl_group", override.hl_group, "string", true)
     end
 
     -- Validate log_level values
