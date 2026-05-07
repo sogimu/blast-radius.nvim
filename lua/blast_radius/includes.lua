@@ -102,12 +102,27 @@ function M.parse_includes(bufnr, lang)
   return includes
 end
 
---- Resolve an include path to an actual file
+--- Get git root synchronously (cached per call site)
+--- @return string|nil
+local function get_git_root()
+  local handle = io.popen("git rev-parse --show-toplevel 2>/dev/null")
+  if not handle then return nil end
+  local line = handle:read("*l")
+  handle:close()
+  if line and line ~= "" then
+    return line:gsub("\r\n?$", ""):gsub("\\", "/")
+  end
+  return nil
+end
+
+--- Resolve an include path to an actual file.
+--- Searches: beside source, common sibling dirs walking up to git root, git root itself.
 --- @param include string Include path string
 --- @param source_file string The file that contains the include
 --- @param lang string Language
+--- @param git_root string|nil Pre-computed git root (optional, avoids repeated shell calls)
 --- @return string|nil resolved_path The resolved file path
-function M.resolve_include_path(include, source_file, lang)
+function M.resolve_include_path(include, source_file, lang, git_root)
   if not include or include == "" then
     return nil
   end
@@ -120,35 +135,28 @@ function M.resolve_include_path(include, source_file, lang)
     source_dir .. "/" .. include,
   }
 
-  local git_root_cmd = "git rev-parse --show-toplevel 2>/dev/null"
-  local handle = io.popen(git_root_cmd)
-  if handle then
-    local git_root = handle:read("*l"):gsub("\r\n?$", "")
-    handle:close()
-    if git_root and git_root ~= "" then
-      git_root = git_root:gsub("\\", "/")
-      table.insert(search_paths, git_root .. "/" .. include)
+  local root = git_root or get_git_root()
+  if root and root ~= "" then
+    table.insert(search_paths, root .. "/" .. include)
+
+    -- Walk from source_dir up to git root, checking sibling include dirs at each level
+    local siblings = { "include", "headers", "inc", "public" }
+    local cur = source_dir
+    for _ = 1, 8 do
+      local parent = cur:match("(.*)[/\\]")
+      if not parent or parent == cur then break end
+      for _, sibling in ipairs(siblings) do
+        table.insert(search_paths, parent .. "/" .. sibling .. "/" .. include)
+      end
+      if cur == root then break end
+      cur = parent
     end
   end
-
-  local extensions = INCLUDE_EXTENSIONS[lang] or {""}
 
   for _, search_path in ipairs(search_paths) do
     local stat = vim.loop.fs_stat(search_path)
     if stat and stat.type == "file" then
       return search_path
-    end
-
-    for _, ext in ipairs(extensions) do
-      if ext == "" then
-        goto continue_ext
-      end
-      local with_ext = search_path .. "." .. ext
-      local ext_stat = vim.loop.fs_stat(with_ext)
-      if ext_stat and ext_stat.type == "file" then
-        return with_ext
-      end
-      ::continue_ext::
     end
   end
 
@@ -180,7 +188,7 @@ end
 
 --- Recursively traverse include dependencies
 --- @param file string Current file path
---- @param ctx { files: table<string, boolean>, edges: table<string, string[]>, visited: table<string, boolean>, depth: number, max_depth: number, ignore_patterns: string[], batch_size: number, pending: number, callback: function }
+--- @param ctx { files: table<string, boolean>, edges: table<string, string[]>, visited: table<string, boolean>, depth: number, max_depth: number, ignore_patterns: string[], batch_size: number, git_root: string|nil, callback: function }
 local function traverse_includes(file, ctx)
   dlog("traverse_includes: entering file=" .. file)
   if ctx.visited[file] then
@@ -264,7 +272,7 @@ local function traverse_includes(file, ctx)
   local resolved_paths = {}
 
   for _, inc in ipairs(includes) do
-    local resolved = M.resolve_include_path(inc, file, lang)
+    local resolved = M.resolve_include_path(inc, file, lang, ctx.git_root)
     if resolved then
       table.insert(resolved_paths, resolved)
       ctx.files[resolved] = true
@@ -307,6 +315,7 @@ function M.build_from_file(file, opts, callback)
     max_depth = opts.max_depth or 10,
     max_traversal_time_sec = opts.max_traversal_time_sec or 30,
     batch_size = (config.current and config.current.git.batch_size) or 100,
+    git_root = get_git_root(),
     callback = callback,
   }
 
