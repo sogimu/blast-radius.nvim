@@ -263,7 +263,7 @@ function M.build_from_cursor(opts, callback)
   end
 
   local params = {
-    textDocument = vim.lsp.util.make_text_document(bufnr),
+    textDocument = { uri = vim.uri_from_bufnr(bufnr) },
     position = {
       line = position.line,
       character = position.col,
