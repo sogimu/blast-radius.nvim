@@ -64,18 +64,3 @@ end, {
   nargs = 0,
   desc = "Show blast-radius performance statistics",
 })
-
-local keymaps = {
-  { "<leader>br", "<cmd>BlastRadius<CR>", { desc = "Run Blast Radius analysis" } },
-  { "<leader>bc", "<cmd>BlastRadiusClearCache<CR>", { desc = "Clear Blast Radius cache" } },
-}
-
-vim.api.nvim_create_autocmd("User", {
-  pattern = "VeryLazy",
-  callback = function()
-    for _, km in ipairs(keymaps) do
-      vim.keymap.set("n", km[1], km[2], km[3])
-    end
-  end,
-  desc = "Set up Blast Radius keymaps",
-})
