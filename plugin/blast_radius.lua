@@ -54,6 +54,40 @@ end, {
   end,
 })
 
+vim.api.nvim_create_user_command("BlastRadiusCoupling", function(info)
+  local opts = parse_args(info.args or "")
+  if opts.no_cache then blast_radius.clear_cache() end
+  blast_radius.run_coupling(opts)
+end, {
+  nargs = "*",
+  desc = "Show temporal coupling in the call chain",
+  complete = function(arglead)
+    local options = { "--depth=", "--no-cache", "--since=", "--stats" }
+    local matches = {}
+    for _, opt in ipairs(options) do
+      if opt:find(arglead, 1, true) == 1 then table.insert(matches, opt) end
+    end
+    return matches
+  end,
+})
+
+vim.api.nvim_create_user_command("BlastRadiusHotspots", function(info)
+  local opts = parse_args(info.args or "")
+  if opts.no_cache then blast_radius.clear_cache() end
+  blast_radius.run_hotspots(opts)
+end, {
+  nargs = "*",
+  desc = "Show hotspots (high churn × complexity) in the call chain",
+  complete = function(arglead)
+    local options = { "--depth=", "--no-cache", "--since=", "--stats" }
+    local matches = {}
+    for _, opt in ipairs(options) do
+      if opt:find(arglead, 1, true) == 1 then table.insert(matches, opt) end
+    end
+    return matches
+  end,
+})
+
 vim.api.nvim_create_user_command("BlastRadiusClearCache", function()
   blast_radius.clear_cache()
 end, {

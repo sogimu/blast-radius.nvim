@@ -110,8 +110,18 @@ function M.run(opts)
 
     local function on_changes_ready(all_changes)
       git.map_changes_to_files(all_changes, gr.files or {}, function(enriched)
-        local scored = git.score_files(enriched, gr.files or {}, opts.bug_since)
-        ui.render(scored, gr, opts)
+        local mode = opts.mode or "suspicion"
+
+        if mode == "coupling" then
+          local pairs = git.temporal_coupling(enriched, gr.files or {})
+          ui.render_coupling(pairs, gr, opts)
+        elseif mode == "hotspot" then
+          local spots = git.hotspots(enriched, gr.files or {})
+          ui.render_hotspots(spots, gr, opts)
+        else
+          local scored = git.score_files(enriched, gr.files or {}, opts.bug_since)
+          ui.render(scored, gr, opts)
+        end
 
         if opts.enable_stats then
           vim.notify(format_stats(utils.stats), vim.log.levels.INFO, { title = "blast-radius" })
@@ -165,6 +175,18 @@ function M.run(opts)
       proceed_with_graph(gr)
     end)
   end
+end
+
+--- Analyze temporal coupling in the call chain
+--- @param opts? table Same options as run()
+function M.run_coupling(opts)
+  M.run(vim.tbl_extend("force", opts or {}, { mode = "coupling" }))
+end
+
+--- Analyze hotspots (high churn × high complexity) in the call chain
+--- @param opts? table Same options as run()
+function M.run_hotspots(opts)
+  M.run(vim.tbl_extend("force", opts or {}, { mode = "hotspot" }))
 end
 
 --- Clear all cache

@@ -129,6 +129,181 @@ function M.render_select(scored, opts)
   end)
 end
 
+-- ── Temporal coupling ────────────────────────────────────────────
+
+local function format_coupling_entry(pair)
+  local pct = math.floor(pair.score * 100)
+  local a = vim.fn.fnamemodify(pair.file_a, ":.")
+  local b = vim.fn.fnamemodify(pair.file_b, ":.")
+  return string.format("%3d%%  %s  ↔  %s  (%d commits together)",
+    pct, a, b, pair.shared_commits)
+end
+
+local function coupling_action(pair)
+  return function()
+    vim.cmd("edit " .. vim.fn.fnameescape(pair.file_a))
+    vim.notify(
+      string.format("Coupled with: %s\nShared commits: %d  Score: %d%%",
+        pair.file_b, pair.shared_commits, math.floor(pair.score * 100)),
+      vim.log.levels.INFO, { title = "blast-radius: coupling" })
+  end
+end
+
+--- Render temporal coupling pairs
+--- @param pairs table[] Output of git.temporal_coupling
+--- @param graph_result table
+--- @param user_config? table
+function M.render_coupling(pairs, graph_result, user_config)
+  if #pairs == 0 then
+    vim.notify("No temporal coupling found in call chain.", vim.log.levels.INFO, { title = "blast-radius" })
+    return
+  end
+
+  local cfg = user_config or {}
+  local provider = M._resolve_provider(cfg)
+
+  local items = {}
+  for _, pair in ipairs(pairs) do
+    table.insert(items, { display = format_coupling_entry(pair), value = pair })
+  end
+
+  if provider == "telescope" then
+    local ok, pickers = pcall(require, "telescope.pickers")
+    if ok then
+      local finders = require("telescope.finders")
+      local conf = require("telescope.config").values
+      local actions = require("telescope.actions")
+      local action_state = require("telescope.actions.state")
+      pickers.new({}, {
+        prompt_title = "Blast Radius — Temporal Coupling",
+        finder = finders.new_table({
+          results = items,
+          entry_maker = function(e)
+            return { value = e.value, display = e.display, ordinal = e.display }
+          end,
+        }),
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr)
+          actions.select_default:replace(function()
+            local sel = action_state.get_selected_entry()
+            actions.close(prompt_bufnr)
+            if sel and sel.value then coupling_action(sel.value)() end
+          end)
+          return true
+        end,
+      }):find()
+      return
+    end
+  end
+
+  local strs = vim.tbl_map(function(i) return i.display end, items)
+  vim.ui.select(strs, { prompt = "Blast Radius — Coupling: " }, function(_, idx)
+    if idx and items[idx] then coupling_action(items[idx].value)() end
+  end)
+end
+
+-- ── Hotspots ─────────────────────────────────────────────────────
+
+local HEAT_ICONS = {
+  high   = "🔥🔥🔥",
+  medium = "🔥🔥 ",
+  low    = "🔥   ",
+  none   = "     ",
+}
+
+local function format_hotspot_entry(entry)
+  local icon = HEAT_ICONS[entry.heat] or "     "
+  local rel = vim.fn.fnamemodify(entry.file, ":.")
+  return string.format("%s  %-45s  churn:%-4d  loc:%d",
+    icon, rel, entry.churn, entry.loc)
+end
+
+local function hotspot_action(entry)
+  return function()
+    vim.cmd("edit " .. vim.fn.fnameescape(entry.file))
+    vim.notify(
+      string.format("Hotspot: churn=%d, loc=%d, score=%.2f",
+        entry.churn, entry.loc, entry.score),
+      vim.log.levels.INFO, { title = "blast-radius: hotspot" })
+  end
+end
+
+--- Render hotspot-ranked files
+--- @param spots table[] Output of git.hotspots
+--- @param graph_result table
+--- @param user_config? table
+function M.render_hotspots(spots, graph_result, user_config)
+  if #spots == 0 then
+    vim.notify("No hotspots found in call chain.", vim.log.levels.INFO, { title = "blast-radius" })
+    return
+  end
+
+  local cfg = user_config or {}
+  local provider = M._resolve_provider(cfg)
+
+  local items = {}
+  for _, spot in ipairs(spots) do
+    table.insert(items, { display = format_hotspot_entry(spot), value = spot })
+  end
+
+  if provider == "telescope" then
+    local ok, pickers = pcall(require, "telescope.pickers")
+    if ok then
+      local finders = require("telescope.finders")
+      local conf = require("telescope.config").values
+      local actions = require("telescope.actions")
+      local action_state = require("telescope.actions.state")
+      pickers.new({}, {
+        prompt_title = "Blast Radius — Hotspots",
+        finder = finders.new_table({
+          results = items,
+          entry_maker = function(e)
+            return { value = e.value, display = e.display, ordinal = e.display }
+          end,
+        }),
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr)
+          actions.select_default:replace(function()
+            local sel = action_state.get_selected_entry()
+            actions.close(prompt_bufnr)
+            if sel and sel.value then hotspot_action(sel.value)() end
+          end)
+          return true
+        end,
+      }):find()
+      return
+    end
+  end
+
+  local strs = vim.tbl_map(function(i) return i.display end, items)
+  vim.ui.select(strs, { prompt = "Blast Radius — Hotspots: " }, function(_, idx)
+    if idx and spots[idx] then hotspot_action(spots[idx])() end
+  end)
+end
+
+-- ── Suspicion (main render) ───────────────────────────────────────
+
+--- Shared provider resolution
+--- @param cfg table
+--- @return string provider
+function M._resolve_provider(cfg)
+  local provider = cfg.ui_provider
+  if not provider then
+    local config = require("blast_radius.config")
+    provider = config.current and config.current.ui_provider or "auto"
+  end
+  if provider == "auto" then
+    if package.loaded["telescope"] or vim.fn.globpath(vim.o.rtp, "plugin/telescope.vim") ~= "" then
+      return "telescope"
+    elseif package.loaded["snacks"] or vim.fn.globpath(vim.o.rtp, "plugin/snacks.vim") ~= "" then
+      return "snacks"
+    else
+      return "select"
+    end
+  end
+  return provider
+end
+
 --- Render suspicion-ranked files from the call chain
 --- @param scored table[] Output of git.score_files
 --- @param graph_result table
@@ -140,22 +315,7 @@ function M.render(scored, graph_result, user_config)
   end
 
   local cfg = user_config or {}
-  local provider = cfg.ui_provider
-
-  if not provider then
-    local config = require("blast_radius.config")
-    provider = config.current and config.current.ui_provider or "auto"
-  end
-
-  if provider == "auto" then
-    if package.loaded["telescope"] or vim.fn.globpath(vim.o.rtp, "plugin/telescope.vim") ~= "" then
-      provider = "telescope"
-    elseif package.loaded["snacks"] or vim.fn.globpath(vim.o.rtp, "plugin/snacks.vim") ~= "" then
-      provider = "snacks"
-    else
-      provider = "select"
-    end
-  end
+  local provider = M._resolve_provider(cfg)
 
   if provider == "telescope" then
     M.render_telescope(scored, cfg)

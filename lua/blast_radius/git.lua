@@ -317,4 +317,102 @@ function M.score_files(enriched, all_files, bug_since)
   return result
 end
 
+--- Compute temporal coupling: pairs of files that frequently change together
+--- Useful for discovering hidden dependencies in the call chain.
+--- @param enriched table[] Enriched changes from map_changes_to_files
+--- @param all_files string[] All files in the call chain
+--- @return table[] Pairs sorted by coupling score descending
+function M.temporal_coupling(enriched, all_files)
+  local churn = {}    -- file -> number of commits
+  local cochange = {} -- canonical_key -> number of co-commits
+
+  for _, change in ipairs(enriched) do
+    local files = change.files or {}
+    for _, f in ipairs(files) do
+      churn[f] = (churn[f] or 0) + 1
+    end
+    for i = 1, #files do
+      for j = i + 1, #files do
+        local a, b = files[i], files[j]
+        if a > b then a, b = b, a end
+        local key = a .. "\0" .. b
+        cochange[key] = (cochange[key] or 0) + 1
+      end
+    end
+  end
+
+  local result = {}
+  for key, count in pairs(cochange) do
+    if count >= 2 then
+      local sep = key:find("\0", 1, true)
+      local a = key:sub(1, sep - 1)
+      local b = key:sub(sep + 1)
+      local union = (churn[a] or 0) + (churn[b] or 0) - count
+      local score = union > 0 and (count / union) or 0
+      if score >= 0.3 then
+        table.insert(result, {
+          file_a = a,
+          file_b = b,
+          shared_commits = count,
+          churn_a = churn[a] or 0,
+          churn_b = churn[b] or 0,
+          score = score,
+        })
+      end
+    end
+  end
+
+  table.sort(result, function(a, b) return a.score > b.score end)
+  return result
+end
+
+--- Compute hotspot score: files with both high churn and high complexity (LOC).
+--- High churn + large file = risky area that changes often and is hard to understand.
+--- @param enriched table[] Enriched changes from map_changes_to_files
+--- @param all_files string[] All files in the call chain
+--- @return table[] Files sorted by hotspot score descending
+function M.hotspots(enriched, all_files)
+  local churn = {}
+  for _, change in ipairs(enriched) do
+    for _, f in ipairs(change.files or {}) do
+      churn[f] = (churn[f] or 0) + 1
+    end
+  end
+
+  local seen = {}
+  local result = {}
+  local max_churn = 0
+  local max_loc = 0
+
+  for _, f in ipairs(all_files) do
+    if not seen[f] then
+      seen[f] = true
+      local c = churn[f] or 0
+      local ok, lines = pcall(vim.fn.readfile, f)
+      local loc = ok and #lines or 0
+      if c > max_churn then max_churn = c end
+      if loc > max_loc then max_loc = loc end
+      table.insert(result, { file = f, churn = c, loc = loc })
+    end
+  end
+
+  for _, entry in ipairs(result) do
+    local nc = max_churn > 0 and (entry.churn / max_churn) or 0
+    local nl = max_loc > 0 and (entry.loc / max_loc) or 0
+    entry.score = nc * nl
+    if entry.score >= 0.5 then
+      entry.heat = "high"
+    elseif entry.score >= 0.15 then
+      entry.heat = "medium"
+    elseif entry.score > 0 then
+      entry.heat = "low"
+    else
+      entry.heat = "none"
+    end
+  end
+
+  table.sort(result, function(a, b) return a.score > b.score end)
+  return result
+end
+
 return M

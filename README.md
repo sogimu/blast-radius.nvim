@@ -10,15 +10,48 @@
 ⚪  src/utils/math.cpp            —       no recent changes
 ```
 
-## How it works
+## Features
 
-1. Place your cursor on a function where you observe incorrect behavior
-2. Run `:BlastRadius`
-3. The plugin traces the incoming call hierarchy (LSP) to find all files in the chain
-4. For each file it looks up recent git commits and scores them by recency
-5. A picker shows the results sorted by suspicion — the most recently changed files are at the top
+### Suspicion analysis (`:BlastRadius`)
 
-The idea: if something broke, the most likely culprit is a file that was changed recently.
+Helps answer: *something is broken, which file is most likely the cause?*
+
+1. Traces the incoming call hierarchy from the symbol under cursor (LSP)
+2. Fetches git history for all files in the chain
+3. Ranks files by how recently they changed — the most recently changed files are most suspicious
+
+```
+🔴  src/billing/tax.cpp          2d ago   feat: new tax calculation rules
+🔴  src/order/pricing.cpp        1d ago   refactor: extract pricing logic
+🟡  src/order/discount.cpp       8d ago   fix: edge case in discounts [fix]
+🟢  src/order/checkout.cpp      21d ago   refactor: cleanup
+⚪  src/utils/math.cpp            —       no recent changes
+```
+
+### Temporal coupling (`:BlastRadiusCoupling`)
+
+Helps answer: *which files always change together? What are the hidden dependencies?*
+
+Scans git history and finds pairs of files in the call chain that are frequently committed together. High coupling means a change to one file usually requires a change to the other — even if the code doesn't show an explicit dependency.
+
+```
+ 95%  src/billing/tax.cpp  ↔  src/order/pricing.cpp     (19 commits together)
+ 80%  src/billing/tax.cpp  ↔  src/billing/invoice.cpp   (16 commits together)
+ 60%  src/order/discount.cpp  ↔  src/order/checkout.cpp (12 commits together)
+```
+
+### Hotspots (`:BlastRadiusHotspots`)
+
+Helps answer: *which files in this chain are the riskiest to touch?*
+
+Combines two signals: **churn** (how often a file changes) × **complexity** (lines of code). Files that are both large and change frequently are the most dangerous — they're hard to understand and are modified often.
+
+```
+🔥🔥🔥  src/billing/tax.cpp       churn:24  loc:890
+🔥🔥    src/order/pricing.cpp      churn:18  loc:450
+🔥      src/order/discount.cpp     churn:8   loc:320
+        src/utils/math.cpp         churn:1   loc:45
+```
 
 ## Requirements
 
@@ -86,12 +119,15 @@ require("blast_radius").setup({
 
 | Command | Description |
 |---------|-------------|
-| `:BlastRadius` | Analyze the call chain from the symbol under cursor |
-| `:BlastRadius --depth=5` | Limit traversal depth (default: 10) |
+| `:BlastRadius` | Suspicion analysis: files ranked by recency of change |
 | `:BlastRadius --bug-since=2025-05-01` | Only flag commits after this date as suspicious |
-| `:BlastRadius --since=60 days ago` | How far back to search git history (default: 30 days) |
+| `:BlastRadius --depth=5` | Limit call chain traversal depth (default: 10) |
+| `:BlastRadius --since=60 days ago` | Git history lookback window (default: 30 days) |
 | `:BlastRadius --no-cache` | Clear cache and re-analyze |
 | `:BlastRadius --stats` | Show performance stats after analysis |
+| `:BlastRadiusCoupling` | Temporal coupling: file pairs that change together |
+| `:BlastRadiusCoupling --depth=5` | Same depth/since args as `:BlastRadius` |
+| `:BlastRadiusHotspots` | Hotspots: high churn × high complexity |
 | `:BlastRadiusClearCache` | Clear all cached results |
 | `:BlastRadiusStats` | Show performance statistics |
 
@@ -108,7 +144,15 @@ vim.keymap.set("n", "<leader>bc", function()
   require("blast_radius").clear_cache()
 end, { desc = "Blast Radius: clear cache" })
 
--- Analyze with a specific bug-introduction date
+vim.keymap.set("n", "<leader>bC", function()
+  require("blast_radius").run_coupling()
+end, { desc = "Blast Radius: temporal coupling" })
+
+vim.keymap.set("n", "<leader>bh", function()
+  require("blast_radius").run_hotspots()
+end, { desc = "Blast Radius: hotspots" })
+
+-- Suspicion analysis with a specific bug-introduction date
 vim.keymap.set("n", "<leader>bR", function()
   vim.ui.input({ prompt = "Bug appeared after (YYYY-MM-DD): " }, function(date)
     if date and date ~= "" then
@@ -144,13 +188,19 @@ If the LSP server does not support call hierarchy, or the cursor is not on a rec
 ```lua
 local br = require("blast_radius")
 
--- Run with options
+-- Suspicion analysis
 br.run({
-  max_depth  = 5,                -- call chain depth
-  bug_since  = "2025-05-01",    -- only count commits after this date
-  since      = "60 days ago",   -- git history lookback window
+  max_depth   = 5,
+  bug_since   = "2025-05-01",   -- only count commits after this date
+  since       = "60 days ago",
   ui_provider = "telescope",
 })
+
+-- Temporal coupling
+br.run_coupling({ depth = 5, since = "90 days ago" })
+
+-- Hotspots
+br.run_hotspots({ depth = 5 })
 
 -- Clear cache
 br.clear_cache()
