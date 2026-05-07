@@ -3,6 +3,15 @@ local config = require("blast_radius.config")
 
 local M = {}
 
+local DEBUG_LOG = "/tmp/blast-radius-debug.log"
+local function dlog(msg)
+  local f = io.open(DEBUG_LOG, "a")
+  if f then
+    f:write(os.date("[%H:%M:%S] ") .. "[includes] " .. msg .. "\n")
+    f:close()
+  end
+end
+
 local LANG_QUERIES = {
   c = "includes",
   cpp = "includes",
@@ -40,8 +49,7 @@ function M.parse_includes(bufnr, lang)
   local query_str
   local plugin_root = debug.getinfo(1, "S").source:sub(2):match("(.*)/lua/.*"):gsub("/blast_radius$", "")
   local query_path = plugin_root .. "/queries/" .. lang .. "/" .. query_file .. ".scm"
-  vim.print("[includes] plugin_root: " .. plugin_root .. " query_path: " .. query_path)
-  io.open("/tmp/blast-radius.log", "a"):write("[includes] query_path: " .. query_path .. "\n")
+  dlog("plugin_root=" .. tostring(plugin_root) .. " query_path=" .. tostring(query_path))
 
   local f = io.open(query_path, "r")
   if f then
@@ -174,17 +182,21 @@ end
 --- @param file string Current file path
 --- @param ctx { files: table<string, boolean>, edges: table<string, string[]>, visited: table<string, boolean>, depth: number, max_depth: number, ignore_patterns: string[], batch_size: number, pending: number, callback: function }
 local function traverse_includes(file, ctx)
+  dlog("traverse_includes: entering file=" .. file)
   if ctx.visited[file] then
+    dlog("traverse_includes: already visited, returning")
     return
   end
   ctx.visited[file] = true
 
   local elapsed_sec = (vim.loop.hrtime() / 1e9) - ctx.start_time_sec
   if ctx.max_traversal_time_sec and elapsed_sec >= ctx.max_traversal_time_sec then
+    dlog("traverse_includes: max_traversal_time_sec reached")
     return
   end
 
   if ctx.depth > ctx.max_depth then
+    dlog("traverse_includes: max_depth reached (" .. ctx.max_depth .. ")")
     return
   end
 
@@ -197,13 +209,16 @@ local function traverse_includes(file, ctx)
 
   local lang = get_lang(file)
   if not lang then
+    dlog("traverse_includes: no language detected for file=" .. file)
     ctx.depth = ctx.depth - 1
     return
   end
+  dlog("traverse_includes: detected lang=" .. lang .. " for file=" .. file)
 
   local should_ignore = false
   for _, pattern in ipairs(ctx.ignore_patterns) do
     if file:find(pattern, 1, true) then
+      dlog("traverse_includes: file ignored by pattern=" .. pattern)
       should_ignore = true
       break
     end
@@ -221,11 +236,17 @@ local function traverse_includes(file, ctx)
     bufnr = vim.fn.bufadd(file)
     ---@diagnostic disable-next-line: param-type-mismatch
     vim.fn.bufload(bufnr)
+    -- Treesitter needs filetype to know which parser to use
+    local ft_map = { c = "c", cpp = "cpp", python = "python", rust = "rust" }
+    vim.api.nvim_set_buf_option(bufnr, "filetype", ft_map[lang] or "")
     opened_buf = true
   end
+  dlog("traverse_includes: bufnr=" .. bufnr .. " opened_buf=" .. tostring(opened_buf))
 
   local ok, includes = pcall(M.parse_includes, bufnr, lang)
+  dlog("traverse_includes: parse_includes result - ok=" .. tostring(ok) .. " count=" .. (includes and #includes or 0))
   if not ok or not includes then
+    dlog("traverse_includes: parse_includes failed, ok=" .. tostring(ok))
     if opened_buf then
       vim.api.nvim_buf_delete(bufnr, { force = true })
     end
@@ -237,25 +258,48 @@ local function traverse_includes(file, ctx)
     vim.api.nvim_buf_delete(bufnr, { force = true })
   end
 
+  local resolved_list = {}
   local resolved_count = 0
   local total = #includes
-
-  if total == 0 then
-    ctx.depth = ctx.depth - 1
-    return
-  end
+  local resolved_paths = {}
 
   for _, inc in ipairs(includes) do
     local resolved = M.resolve_include_path(inc, file, lang)
-    if resolved and not ctx.visited[resolved] then
+    if resolved then
+      table.insert(resolved_paths, resolved)
       ctx.files[resolved] = true
       table.insert(ctx.edges[file], resolved)
-
       resolved_count = resolved_count + 1
-      if resolved_count <= ctx.batch_size then
+    end
+  end
+  dlog("traverse_includes: resolved " .. resolved_count .. "/" .. total .. " includes")
+
+  -- Recurse into resolved includes (only unvisited to avoid infinite recursion)
+  local recurse_idx = 0
+  for _, resolved in ipairs(resolved_paths) do
+    if not ctx.visited[resolved] then
+      recurse_idx = recurse_idx + 1
+      if recurse_idx <= ctx.batch_size then
+        dlog("traverse_includes: recursing into " .. resolved)
         traverse_includes(resolved, ctx)
       end
     end
+  end
+    end
+  end
+  dlog("traverse_includes: resolved " .. resolved_count .. "/" .. total .. " includes")
+
+  -- Recurse into resolved includes
+  local idx = 0
+  for _, resolved in ipairs(resolved_list) do
+    if ctx.visited[resolved] and resolved ~= file then
+      goto continue_recurse
+    end
+    idx = idx + 1
+    if idx <= ctx.batch_size then
+      traverse_includes(resolved, ctx)
+    end
+    ::continue_recurse::
   end
 
   ctx.depth = ctx.depth - 1
@@ -282,8 +326,14 @@ function M.build_from_file(file, opts, callback)
     callback = callback,
   }
 
+  dlog("build_from_file: file=" .. file)
+  dlog("build_from_file: max_depth=" .. (opts.max_depth or 10) .. " batch_size=" .. (config.current and config.current.git.batch_size or 100))
+  dlog("build_from_file: ignore_patterns=" .. vim.inspect(opts.ignore_patterns or (config.current and config.current.git.exclude_patterns) or {}))
+
   vim.defer_fn(function()
+    dlog("build_from_file: starting traverse_includes")
     traverse_includes(file, ctx)
+    dlog("build_from_file: traverse_includes completed, files count=" .. vim.tbl_count(ctx.files))
 
     local files = {}
     for path in pairs(ctx.files) do
@@ -291,6 +341,7 @@ function M.build_from_file(file, opts, callback)
     end
     table.sort(files)
 
+    dlog("build_from_file: final files=" .. vim.inspect(files))
     utils.stats.stop("build_from_file")
     callback({
       files = files,
