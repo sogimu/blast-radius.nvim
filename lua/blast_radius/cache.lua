@@ -39,14 +39,14 @@ local function cache_dir_size()
     return 0
   end
 
-  local entry = vim.loop.fs_scandir_next(handle)
-  while entry do
-    local path = string.format("%s/%s", cache_dir, entry.name)
+  local name = vim.loop.fs_scandir_next(handle)
+  while name do
+    local path = string.format("%s/%s", cache_dir, name)
     local stat = vim.loop.fs_stat(path)
     if stat and stat.type == "file" then
       total = total + stat.size
     end
-    entry = vim.loop.fs_scandir_next(handle)
+    name = vim.loop.fs_scandir_next(handle)
   end
 
   return total
@@ -185,20 +185,18 @@ function M.invalidate_file(file)
   local file_stat = vim.loop.fs_stat(file)
   local current_mtime = file_stat and file_stat.mtime.sec or nil
 
-  local entry = vim.loop.fs_scandir_next(handle)
-  while entry do
-    local path = string.format("%s/%s", cache_dir, entry.name)
+  local name = vim.loop.fs_scandir_next(handle)
+  while name do
+    local path = string.format("%s/%s", cache_dir, name)
     local cache_entry = read_cache_entry(path)
 
     if cache_entry and cache_entry.files then
       local should_delete = false
 
-      -- If file no longer exists, invalidate
       if not current_mtime and cache_entry.files[file] then
         should_delete = true
       end
 
-      -- If file was modified after caching, invalidate
       if current_mtime and cache_entry.files[file] and cache_entry.files[file] < current_mtime then
         should_delete = true
       end
@@ -209,7 +207,7 @@ function M.invalidate_file(file)
       end
     end
 
-    entry = vim.loop.fs_scandir_next(handle)
+    name = vim.loop.fs_scandir_next(handle)
   end
 
   utils.stats.stop("cache_invalidate_file")
@@ -237,11 +235,11 @@ function M.prune_if_needed()
     return
   end
 
-  local dir_entry = vim.loop.fs_scandir_next(handle)
-  while dir_entry do
-    local path = string.format("%s/%s", cache_dir, dir_entry.name)
+  local name = vim.loop.fs_scandir_next(handle)
+  while name do
+    local path = string.format("%s/%s", cache_dir, name)
     local stat = vim.loop.fs_stat(path)
-    if stat and stat.type == "file" and dir_entry.name:match("%.json$") then
+    if stat and stat.type == "file" and name:match("%.json$") then
       local cache_entry = read_cache_entry(path)
       table.insert(files_info, {
         path = path,
@@ -249,7 +247,7 @@ function M.prune_if_needed()
         timestamp = cache_entry and cache_entry.timestamp or 0,
       })
     end
-    dir_entry = vim.loop.fs_scandir_next(handle)
+    name = vim.loop.fs_scandir_next(handle)
   end
 
   -- Sort by timestamp (oldest first)
@@ -283,14 +281,14 @@ function M.clear_all()
     return true
   end
 
-  local entry = vim.loop.fs_scandir_next(handle)
-  while entry do
-    local path = string.format("%s/%s", cache_dir, entry.name)
+  local name = vim.loop.fs_scandir_next(handle)
+  while name do
+    local path = string.format("%s/%s", cache_dir, name)
     local ok = vim.loop.fs_unlink(path)
     if not ok then
       success = false
     end
-    entry = vim.loop.fs_scandir_next(handle)
+    name = vim.loop.fs_scandir_next(handle)
   end
 
   vim.loop.fs_rmdir(cache_dir)

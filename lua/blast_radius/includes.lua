@@ -40,7 +40,7 @@ function M.parse_includes(bufnr, lang)
     return {}
   end
 
-  local ok_parser, parser = pcall(vim.treesitter.get_parser, bufnr)
+  local ok_parser, parser = pcall(vim.treesitter.get_parser, bufnr, lang)
   if not ok_parser or not parser then
     vim.print("[blast-radius:includes] Treesitter parser unavailable for bufnr: " .. bufnr)
     return {}
@@ -238,7 +238,7 @@ local function traverse_includes(file, ctx)
     vim.fn.bufload(bufnr)
     -- Treesitter needs filetype to know which parser to use
     local ft_map = { c = "c", cpp = "cpp", python = "python", rust = "rust" }
-    vim.api.nvim_set_buf_option(bufnr, "filetype", ft_map[lang] or "")
+    vim.api.nvim_set_option_value("filetype", ft_map[lang] or "", { buf = bufnr })
     opened_buf = true
   end
   dlog("traverse_includes: bufnr=" .. bufnr .. " opened_buf=" .. tostring(opened_buf))

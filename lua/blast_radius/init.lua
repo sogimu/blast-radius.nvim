@@ -88,6 +88,9 @@ end
 --- @param opts? { max_depth?: number, since?: string, max_commits?: number, ui_provider?: string, enable_stats?: boolean }
 function M.run(opts)
   opts = opts or {}
+  if not config.current then
+    config.setup({})
+  end
   utils.stats.start("run")
 
   local bufnr = vim.api.nvim_get_current_buf()

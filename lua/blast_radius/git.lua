@@ -32,7 +32,7 @@ end
 --- Check if current directory is inside a git repository
 --- @param callback function(is_git_repo: boolean)
 local function is_git_repo(callback)
-  vim.system({ "git", "rev-parse", "--git-dir" }, { capture = true }, function(result)
+  vim.system({ "git", "rev-parse", "--git-dir" }, { text = true }, function(result)
     vim.schedule(function()
       callback(result.code == 0)
     end)
@@ -105,7 +105,7 @@ function M.get_recent_changes(files, opts, callback)
     local seen_hashes = {}
 
     local function process_batch(offset)
-      if offset >= #files then
+      if offset > #files then
         utils.stats.stop("git_get_recent_changes")
 
         local deduped = {}
@@ -124,9 +124,9 @@ function M.get_recent_changes(files, opts, callback)
         return
       end
 
-      local batch_end = math.min(offset + batch_size, #files)
+      local batch_end = math.min(offset + batch_size - 1, #files)
       local batch = {}
-      for i = offset, batch_end - 1 do
+      for i = offset, batch_end do
         table.insert(batch, files[i])
       end
 
@@ -144,7 +144,7 @@ function M.get_recent_changes(files, opts, callback)
         table.insert(args, f)
       end
 
-      vim.system(args, { capture = true, cwd = git_root }, function(result)
+      vim.system(args, { text = true, cwd = git_root }, function(result)
         vim.schedule(function()
           if result.code == 0 and result.stdout and result.stdout ~= "" then
             local changes = parse_log_output(result.stdout)
@@ -158,7 +158,7 @@ function M.get_recent_changes(files, opts, callback)
       end)
     end
 
-    process_batch(0)
+    process_batch(1)
   end)
 end
 
@@ -219,14 +219,14 @@ function M.map_changes_to_files(changes, files, callback)
       "-r",
       "--root",
       change.hash,
-    }, { capture = true, cwd = git_root }, function(result)
+    }, { text = true, cwd = git_root }, function(result)
       vim.schedule(function()
         if result.code == 0 and result.stdout then
           for line in result.stdout:gmatch("[^\r\n]+") do
             if line ~= "" then
-              local normalized = line:gsub("\\", "/")
-              if file_set[normalized] then
-                table.insert(enriched_change.files, normalized)
+              local abs_path = git_root .. "/" .. line:gsub("\\", "/")
+              if file_set[abs_path] then
+                table.insert(enriched_change.files, abs_path)
               end
             end
           end
