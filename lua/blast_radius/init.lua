@@ -70,7 +70,7 @@ local function get_cursor_symbol(bufnr)
     return vim.treesitter.get_node({ pos = { cursor[1] - 1, cursor[2] }, bufnr = bufnr })
   end)
   if ok and node then
-    return table.concat(node:get_text { bufnr = bufnr } or {}, " ")
+    return table.concat(vim.treesitter.get_node_text(node, bufnr) or {}, " ")
   end
   return "<unknown>"
 end

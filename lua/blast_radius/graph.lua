@@ -36,7 +36,7 @@ function M.get_symbol_at_cursor(bufnr)
     return nil, nil
   end
 
-  local symbol_name = node:get_text { bufnr = bufnr }
+  local symbol_name = vim.treesitter.get_node_text(node, bufnr)
 
   local start_row, start_col, _, _ = node:range()
   local position = { buf = bufnr, line = start_row, col = start_col }
