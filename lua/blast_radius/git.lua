@@ -243,4 +243,78 @@ function M.map_changes_to_files(changes, files, callback)
   process_change(1)
 end
 
+--- Score files in the call chain by suspicion (how recently they changed)
+--- @param enriched table[] Enriched changes from map_changes_to_files
+--- @param all_files string[] All files in the call chain
+--- @param bug_since? string ISO date string "YYYY-MM-DD" — only count commits after this date
+--- @return table[] Scored entries sorted by suspicion (high first)
+function M.score_files(enriched, all_files, bug_since)
+  local now_sec = os.time()
+
+  -- Build per-file most recent commit
+  local file_last_change = {}
+  for _, change in ipairs(enriched) do
+    for _, f in ipairs(change.files or {}) do
+      if not file_last_change[f] or change.date > file_last_change[f].date then
+        file_last_change[f] = change
+      end
+    end
+  end
+
+  local seen = {}
+  local result = {}
+
+  for _, f in ipairs(all_files) do
+    if not seen[f] then
+      seen[f] = true
+      local last = file_last_change[f]
+      local days_ago
+      local suspicion = "none"
+
+      if last then
+        local y, mo, d = last.date:match("^(%d+)-(%d+)-(%d+)")
+        if y then
+          local commit_time = os.time({
+            year = tonumber(y), month = tonumber(mo), day = tonumber(d),
+            hour = 12, min = 0, sec = 0,
+          })
+          days_ago = math.floor((now_sec - commit_time) / 86400)
+        end
+
+        -- If bug_since provided: commits before that date can't be the culprit
+        if bug_since and last.date < bug_since then
+          suspicion = "none"
+          days_ago = nil
+        elseif days_ago then
+          if days_ago <= 3 then
+            suspicion = "high"
+          elseif days_ago <= 14 then
+            suspicion = "medium"
+          else
+            suspicion = "low"
+          end
+        end
+      end
+
+      table.insert(result, {
+        file = f,
+        last_commit = last,
+        days_ago = days_ago,
+        suspicion = suspicion,
+      })
+    end
+  end
+
+  local order = { high = 0, medium = 1, low = 2, none = 3 }
+  table.sort(result, function(a, b)
+    local oa = order[a.suspicion] or 3
+    local ob = order[b.suspicion] or 3
+    if oa ~= ob then return oa < ob end
+    if a.days_ago and b.days_ago then return a.days_ago < b.days_ago end
+    return a.days_ago ~= nil
+  end)
+
+  return result
+end
+
 return M

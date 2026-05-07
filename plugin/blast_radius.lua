@@ -15,6 +15,8 @@ local function parse_args(args)
       opts.no_cache = true
     elseif arg:match("^%-%-since=") then
       opts.since = arg:sub(9)
+    elseif arg:match("^%-%-bug%-since=") then
+      opts.bug_since = arg:sub(13)
     elseif arg == "--stats" then
       opts.enable_stats = true
     end
@@ -39,6 +41,7 @@ end, {
       "--depth=",
       "--no-cache",
       "--since=",
+      "--bug-since=",
       "--stats",
     }
     local matches = {}

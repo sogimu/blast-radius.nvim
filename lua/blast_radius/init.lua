@@ -100,16 +100,18 @@ function M.run(opts)
   local graph_result = cache.get(graph_cache_key)
 
   local function proceed_with_graph(gr)
+    local since = opts.bug_since or opts.since or "30 days ago"
     local change_cache_key = cache.make_key("git", {
       files = gr.files or {},
-      since = opts.since or "30 days ago",
+      since = since,
       max_commits = opts.max_commits or 500,
     })
     local changes = cache.get(change_cache_key)
 
-    if changes then
-      git.map_changes_to_files(changes, gr.files or {}, function(enriched)
-        ui.render(enriched, gr, opts)
+    local function on_changes_ready(all_changes)
+      git.map_changes_to_files(all_changes, gr.files or {}, function(enriched)
+        local scored = git.score_files(enriched, gr.files or {}, opts.bug_since)
+        ui.render(scored, gr, opts)
 
         if opts.enable_stats then
           vim.notify(format_stats(utils.stats), vim.log.levels.INFO, { title = "blast-radius" })
@@ -117,22 +119,17 @@ function M.run(opts)
 
         utils.stats.stop("run")
       end)
+    end
+
+    if changes then
+      on_changes_ready(changes)
     else
       git.get_recent_changes(gr.files or {}, {
-        since = opts.since or "30 days ago",
+        since = since,
         max_commits = opts.max_commits or 500,
       }, function(new_changes)
         cache.set(change_cache_key, new_changes, gr.files or {})
-
-        git.map_changes_to_files(new_changes, gr.files or {}, function(enriched)
-          ui.render(enriched, gr, opts)
-
-          if opts.enable_stats then
-            vim.notify(format_stats(utils.stats), vim.log.levels.INFO, { title = "blast-radius" })
-          end
-
-          utils.stats.stop("run")
-        end)
+        on_changes_ready(new_changes)
       end)
     end
   end
