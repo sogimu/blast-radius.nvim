@@ -26,22 +26,32 @@ end
 function M.get_symbol_at_cursor(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
 
-  local ok_node, node = pcall(function()
-    local win = vim.api.nvim_get_current_win()
-    local cursor = vim.api.nvim_win_get_cursor(win)
-    return vim.treesitter.get_node({ pos = { cursor[1] - 1, cursor[2] }, bufnr = bufnr })
-  end)
+  local win = vim.api.nvim_get_current_win()
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  local row = cursor[1] - 1
+  local col = cursor[2]
 
-  if not ok_node or not node then
+  local ok_parser, parser = pcall(vim.treesitter.get_parser, bufnr)
+  if not ok_parser or not parser then
     return nil, nil
   end
 
-  local symbol_name = vim.treesitter.get_node_text(node, bufnr)
+  local ok_node, node = pcall(vim.treesitter.get_node, { pos = { row, col }, bufnr = bufnr })
+  while (ok_node and node) do
+    local text = vim.treesitter.get_node_text(node, bufnr)
+    if text and text ~= "" and text:match("^[%w_]+$") then
+      local start_row, start_col, _, _ = node:range()
+      return text, { buf = bufnr, line = start_row, col = start_col }
+    end
 
-  local start_row, start_col, _, _ = node:range()
-  local position = { buf = bufnr, line = start_row, col = start_col }
+    local parent = node:parent()
+    if not parent then
+      break
+    end
+    node = parent
+  end
 
-  return symbol_name, position
+  return nil, nil
 end
 
 --- Make an async LSP request with timeout
@@ -250,15 +260,22 @@ function M.build_from_cursor(opts, callback)
 
   local bufnr = vim.api.nvim_get_current_buf()
   local symbol_name, position = M.get_symbol_at_cursor(bufnr)
+  local root_file = vim.api.nvim_buf_get_name(bufnr)
 
   if not symbol_name or not position then
-    utils.stats.stop("build_from_cursor")
-    callback {
-      files = {},
-      edges = {},
-      root_symbol = "",
-      root_file = vim.api.nvim_buf_get_name(bufnr),
-    }
+    -- Try fallback to includes-based detection
+    local ok, includes = pcall(require, "blast_radius.includes")
+    if ok and includes and includes.build_from_cursor then
+      includes.build_from_cursor(opts, callback)
+    else
+      utils.stats.stop("build_from_cursor")
+      callback {
+        files = { root_file },
+        edges = {},
+        root_symbol = "",
+        root_file = root_file,
+      }
+    end
     return
   end
 
