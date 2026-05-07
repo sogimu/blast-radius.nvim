@@ -309,15 +309,33 @@ function M.build_from_cursor(opts, callback)
   vim.print("[blast-radius] LSP callHierarchy: " .. (has_ch and "yes" or "no") .. ", symbol: " .. (symbol_name or "<none>"))
 
   if not symbol_name or not position then
-    dlog("build_from_cursor: no symbol/position found, returning current file only")
-    vim.print("[blast-radius] Fallback failed, returning current file only: " .. root_file)
-    utils.stats.stop("build_from_cursor")
-    callback {
-      files = { root_file },
-      edges = {},
-      root_symbol = "",
-      root_file = root_file,
-    }
+    dlog("build_from_cursor: no symbol/position found, falling back to includes")
+    vim.print("[blast-radius] No symbol found, falling back to include-based detection")
+    local ok, includes = pcall(require, "blast_radius.includes")
+    if ok and includes then
+      if includes.build_from_file then
+        includes.build_from_file(root_file, opts, callback)
+      elseif includes.build_from_cursor then
+        includes.build_from_cursor(opts, callback)
+      else
+        utils.stats.stop("build_from_cursor")
+        callback {
+          files = { root_file },
+          edges = {},
+          root_symbol = "",
+          root_file = root_file,
+        }
+      end
+    else
+      vim.print("[blast-radius] Includes module failed to load")
+      utils.stats.stop("build_from_cursor")
+      callback {
+        files = { root_file },
+        edges = {},
+        root_symbol = "",
+        root_file = root_file,
+      }
+    end
     return
   end
 
