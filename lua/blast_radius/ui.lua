@@ -57,7 +57,7 @@ end
 local function make_select_action(entry)
   return function()
     local has_diffview = package.loaded["diffview"] ~= nil or
-      vim.fn.globpath(&rtp, "plugin/diffview.vim") ~= ""
+      vim.fn.globpath(vim.o.rtp, "plugin/diffview.vim") ~= ""
 
     if has_diffview and entry.change and entry.change.hash then
       vim.cmd("DiffviewOpen " .. entry.change.hash .. "^!")
