@@ -9,6 +9,15 @@ local M = {}
 
 local GROUP_NAME = "blast_radius"
 local AUGROUP = nil
+local LOG_FILE = "/tmp/blast-radius.log"
+
+local function log(msg)
+  local f = io.open(LOG_FILE, "a")
+  if f then
+    f:write(os.date("[%H:%M:%S] ") .. msg .. "\n")
+    f:close()
+  end
+end
 
 --- Setup the plugin
 --- @param opts? table
@@ -126,21 +135,29 @@ function M.run(opts)
   end
 
   if graph_result then
-    vim.notify(string.format("Using cached graph (%d files)...", #graph_result.files), vim.log.levels.INFO, { title = "blast-radius" })
+    vim.print("[blast-radius] Using cached graph (" .. #graph_result.files .. " files)...")
     proceed_with_graph(graph_result)
   else
-    vim.notify("Analyzing dependencies...", vim.log.levels.INFO, { title = "blast-radius" })
+    vim.print("[blast-radius] Analyzing dependencies for: " .. current_file)
 
     graph.build_from_cursor({
       max_depth = opts.max_depth or 10,
     }, function(gr)
       local file_count = gr.files and #gr.files or 0
-      vim.notify(string.format("Found %d related file(s)", file_count), vim.log.levels.INFO, { title = "blast-radius" })
+      vim.print("[blast-radius] Graph result: " .. file_count .. " file(s)")
+      if gr.files then
+        for i, f in ipairs(gr.files) do
+          vim.print("  -> " .. i .. ": " .. f)
+        end
+      end
+      vim.print("[blast-radius] Changes from git:")
 
       cache.set(graph_cache_key, gr, gr.files or {})
 
       if file_count == 0 then
-        vim.notify("No related files found. Check LSP (:lua vim.print(vim.lsp.get_clients())) and Treesitter parsers (:checkhealth nvim-treesitter).", vim.log.levels.WARN, { title = "blast-radius" })
+        vim.print("[blast-radius] No related files. Check:")
+        vim.print("  :lua vim.print(vim.lsp.get_clients())")
+        vim.print("  :checkhealth nvim-treesitter")
         utils.stats.stop("run")
         return
       end

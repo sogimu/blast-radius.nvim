@@ -264,26 +264,17 @@ function M.build_from_cursor(opts, callback)
 
   -- Check LSP support
   local has_ch = M.has_call_hierarchy_support(bufnr)
-  vim.notify(string.format("LSP callHierarchy: %s, symbol: %s",
-    has_ch and "yes" or "no",
-    symbol_name or "<none>"
-  ), vim.log.levels.DEBUG, { title = "blast-radius" })
+  vim.print("[blast-radius] LSP callHierarchy: " .. (has_ch and "yes" or "no") .. ", symbol: " .. (symbol_name or "<none>"))
 
   if not symbol_name or not position then
-    -- Try fallback to includes-based detection
-    local ok, includes = pcall(require, "blast_radius.includes")
-    if ok and includes and includes.build_from_file then
-      vim.notify("Falling back to include-based detection", vim.log.levels.DEBUG, { title = "blast-radius" })
-      includes.build_from_file(root_file, opts, callback)
-    else
-      utils.stats.stop("build_from_cursor")
-      callback {
-        files = { root_file },
-        edges = {},
-        root_symbol = "",
-        root_file = root_file,
-      }
-    end
+    vim.print("[blast-radius] Fallback failed, returning current file only: " .. root_file)
+    utils.stats.stop("build_from_cursor")
+    callback {
+      files = { root_file },
+      edges = {},
+      root_symbol = "",
+      root_file = root_file,
+    }
     return
   end
 
@@ -298,11 +289,26 @@ function M.build_from_cursor(opts, callback)
   M.lsp_request_async("textDocument/prepareCallHierarchy", params, {
     on_done = function(result, err)
       if err or not result or #result == 0 then
+        vim.print("[blast-radius] LSP returned no call hierarchy, falling back to includes")
         -- Fallback to includes-based detection
         local ok, includes = pcall(require, "blast_radius.includes")
-        if ok and includes and includes.build_from_cursor then
-          includes.build_from_cursor(opts, callback)
+        if ok and includes then
+          if includes.build_from_file then
+            includes.build_from_file(vim.api.nvim_buf_get_name(bufnr), opts, callback)
+          elseif includes.build_from_cursor then
+            includes.build_from_cursor(opts, callback)
+          else
+            vim.print("[blast-radius] Includes module has no build_from_file or build_from_cursor")
+            utils.stats.stop("build_from_cursor")
+            callback {
+              files = { vim.api.nvim_buf_get_name(bufnr) },
+              edges = {},
+              root_symbol = symbol_name,
+              root_file = vim.api.nvim_buf_get_name(bufnr),
+            }
+          end
         else
+          vim.print("[blast-radius] Includes module failed to load")
           utils.stats.stop("build_from_cursor")
           callback {
             files = { vim.api.nvim_buf_get_name(bufnr) },
@@ -313,6 +319,8 @@ function M.build_from_cursor(opts, callback)
         end
         return
       end
+
+      vim.print("[blast-radius] LSP call hierarchy found: " .. (result[1].name or "<anonymous>"))
 
       local root_item = result[1]
       local ctx = {
