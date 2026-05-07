@@ -104,7 +104,7 @@ function M.get_recent_changes(files, opts, callback)
     local all_changes = {}
     local seen_hashes = {}
 
-    local process_batch = function(offset)
+    local function process_batch(offset)
       if offset >= #files then
         utils.stats.stop("git_get_recent_changes")
 
