@@ -121,9 +121,10 @@ function M.lsp_request_async(method, params, opts)
   local active_requests = 0
   for _, client in ipairs(clients) do
     local name = client.name or "<unnamed>"
-    local capable = client.server_capabilities and (client.server_capabilities.callHierarchyProvider or method ~= "callHierarchy/incomingCalls")
+    local is_call_hierarchy = method:find("^callHierarchy/") ~= nil
+    local capable = client.server_capabilities and (client.server_capabilities.callHierarchyProvider or not is_call_hierarchy)
     dlog("lsp_request_async: client=" .. name .. " capable=" .. tostring(capable))
-    if client.server_capabilities and (client.server_capabilities.callHierarchyProvider or method ~= "callHierarchy/incomingCalls") then
+    if capable then
       active_requests = active_requests + 1
       local ok_req, req_err = pcall(function()
         dlog("lsp_request_async: requesting method=" .. method .. " from client=" .. name)
@@ -147,16 +148,12 @@ function M.lsp_request_async(method, params, opts)
   end
 end
 
---- Generate a unique key for cycle detection from incoming call item
---- @param item table LSP incoming call item
+--- Generate a unique key for cycle detection from a CallHierarchyItem
+--- @param item table LSP CallHierarchyItem
 --- @return string
 local function make_visited_key(item)
-  local from = item.from
-  if not from then
-    return ""
-  end
-  local uri = from.uri or ""
-  local range = from.selectionRange or from.range
+  local uri = item.uri or ""
+  local range = item.selectionRange or item.range
   local line = (range and range.start and range.start.line) or 0
   local char = (range and range.start and range.start.character) or 0
   return string.format("%s:%d:%d", uri, line, char)
@@ -176,37 +173,37 @@ local function should_ignore(uri, ignore_patterns)
   return false
 end
 
---- Recursive traversal of incoming calls graph
---- @param root_item table LSP call hierarchy item
+--- Recursive traversal of outgoing calls graph (what does this function call?)
+--- @param root_item table LSP CallHierarchyItem
 --- @param ctx { files: table<string, boolean>, edges: table<string, string[]>, visited: table<string, boolean>, depth: number, start_time_sec: number, ignore_patterns: string[], max_depth: number, max_traversal_time_sec: number }
 --- @param callback function() Called when traversal is complete
-local function traverse_incoming_calls(root_item, ctx, callback)
-  dlog("traverse_incoming_calls: entry, depth=" .. ctx.depth .. " item=" .. (root_item.name or "<anonymous>"))
-  utils.stats.start("traverse_incoming")
+local function traverse_outgoing_calls(root_item, ctx, callback)
+  dlog("traverse_outgoing_calls: entry, depth=" .. ctx.depth .. " item=" .. (root_item.name or "<anonymous>"))
+  utils.stats.start("traverse_outgoing")
 
   local elapsed_sec = (vim.loop.hrtime() / 1e9) - ctx.start_time_sec
   if ctx.max_traversal_time_sec and elapsed_sec >= ctx.max_traversal_time_sec then
-    dlog("traverse_incoming_calls: max traversal time reached, elapsed=" .. string.format("%.2f", elapsed_sec) .. "s")
-    utils.stats.stop("traverse_incoming")
+    dlog("traverse_outgoing_calls: max traversal time reached, elapsed=" .. string.format("%.2f", elapsed_sec) .. "s")
+    utils.stats.stop("traverse_outgoing")
     callback()
     return
   end
 
   if ctx.depth > ctx.max_depth then
-    dlog("traverse_incoming_calls: max depth reached, depth=" .. ctx.depth .. " max=" .. ctx.max_depth)
-    utils.stats.stop("traverse_incoming")
+    dlog("traverse_outgoing_calls: max depth reached, depth=" .. ctx.depth .. " max=" .. ctx.max_depth)
+    utils.stats.stop("traverse_outgoing")
     callback()
     return
   end
 
   ctx.depth = ctx.depth + 1
 
-  local root_key = make_visited_key { from = root_item }
+  local root_key = make_visited_key(root_item)
   if root_key ~= "" then
     if ctx.visited[root_key] then
-      dlog("traverse_incoming_calls: cycle detected, key=" .. root_key)
+      dlog("traverse_outgoing_calls: cycle detected, key=" .. root_key)
       ctx.depth = ctx.depth - 1
-      utils.stats.stop("traverse_incoming")
+      utils.stats.stop("traverse_outgoing")
       callback()
       return
     end
@@ -219,59 +216,52 @@ local function traverse_incoming_calls(root_item, ctx, callback)
     ctx.files[path] = true
   end
 
-  local params = {
-    item = root_item,
-  }
-
-  M.lsp_request_async("callHierarchy/incomingCalls", params, {
+  M.lsp_request_async("callHierarchy/outgoingCalls", { item = root_item }, {
     timeout_ms = (config.current and config.current.git.timeout) or 30000,
-      on_done = function(result, err)
-        if err then
-          dlog("traverse_incoming_calls: LSP error=" .. (err.message or "unknown"))
-          ctx.depth = ctx.depth - 1
-          utils.stats.stop("traverse_incoming")
-          callback()
-          return
-        end
+    on_done = function(result, err)
+      if err then
+        dlog("traverse_outgoing_calls: LSP error=" .. (err.message or "unknown"))
+        ctx.depth = ctx.depth - 1
+        utils.stats.stop("traverse_outgoing")
+        callback()
+        return
+      end
 
-        if not result or #result == 0 then
-          dlog("traverse_incoming_calls: no incoming calls returned for " .. (root_item.name or "<anonymous>"))
-          ctx.depth = ctx.depth - 1
-          utils.stats.stop("traverse_incoming")
-          callback()
-          return
-        end
+      if not result or #result == 0 then
+        dlog("traverse_outgoing_calls: no outgoing calls for " .. (root_item.name or "<anonymous>"))
+        ctx.depth = ctx.depth - 1
+        utils.stats.stop("traverse_outgoing")
+        callback()
+        return
+      end
 
-        dlog("traverse_incoming_calls: processing #" .. #result .. " incoming calls for " .. (root_item.name or "<anonymous>"))
+      dlog("traverse_outgoing_calls: processing #" .. #result .. " outgoing calls for " .. (root_item.name or "<anonymous>"))
 
-      local from_uri = root_uri
-      local from_key = from_uri or ""
+      local from_key = root_uri or ""
       if not ctx.edges[from_key] then
         ctx.edges[from_key] = {}
       end
 
       local pending = 0
-      for _, incoming in ipairs(result) do
-        local caller = incoming.from
-        if not caller then
-          goto continue
-        end
+      for _, outgoing in ipairs(result) do
+        local callee = outgoing.to
+        if not callee then goto continue end
 
-        local caller_uri = caller.uri
-        local caller_path = caller_uri and caller_uri:gsub("^file://", "") or ""
+        local callee_uri = callee.uri
+        local callee_path = callee_uri and callee_uri:gsub("^file://", "") or ""
 
-        if caller_path ~= "" and not should_ignore(caller_uri or "", ctx.ignore_patterns) then
-          ctx.files[caller_path] = true
-          table.insert(ctx.edges[from_key], caller_uri)
+        if callee_path ~= "" and not should_ignore(callee_uri or "", ctx.ignore_patterns) then
+          ctx.files[callee_path] = true
+          table.insert(ctx.edges[from_key], callee_uri)
 
-          local caller_key = make_visited_key(incoming)
-          if not ctx.visited[caller_key] then
+          local callee_key = make_visited_key(callee)
+          if not ctx.visited[callee_key] then
             pending = pending + 1
-            traverse_incoming_calls(caller, ctx, function()
+            traverse_outgoing_calls(callee, ctx, function()
               pending = pending - 1
               if pending == 0 then
                 ctx.depth = ctx.depth - 1
-                utils.stats.stop("traverse_incoming")
+                utils.stats.stop("traverse_outgoing")
                 callback()
               end
             end)
@@ -283,7 +273,7 @@ local function traverse_incoming_calls(root_item, ctx, callback)
 
       if pending == 0 then
         ctx.depth = ctx.depth - 1
-        utils.stats.stop("traverse_incoming")
+        utils.stats.stop("traverse_outgoing")
         callback()
       end
     end,
@@ -389,7 +379,7 @@ function M.build_from_cursor(opts, callback)
         max_traversal_time_sec = opts.max_traversal_time_sec or 30,
       }
 
-      traverse_incoming_calls(root_item, ctx, function()
+      traverse_outgoing_calls(root_item, ctx, function()
         local files = {}
         for path in pairs(ctx.files) do
           table.insert(files, path)
