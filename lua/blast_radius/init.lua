@@ -126,17 +126,21 @@ function M.run(opts)
   end
 
   if graph_result then
+    vim.notify(string.format("Using cached graph (%d files)...", #graph_result.files), vim.log.levels.INFO, { title = "blast-radius" })
     proceed_with_graph(graph_result)
   else
-    vim.notify("Analyzing call hierarchy...", vim.log.levels.INFO, { title = "blast-radius" })
+    vim.notify("Analyzing dependencies...", vim.log.levels.INFO, { title = "blast-radius" })
 
     graph.build_from_cursor({
       max_depth = opts.max_depth or 10,
     }, function(gr)
+      local file_count = gr.files and #gr.files or 0
+      vim.notify(string.format("Found %d related file(s)", file_count), vim.log.levels.INFO, { title = "blast-radius" })
+
       cache.set(graph_cache_key, gr, gr.files or {})
 
-      if not gr.files or #gr.files == 0 then
-        vim.notify("No related files found.", vim.log.levels.WARN, { title = "blast-radius" })
+      if file_count == 0 then
+        vim.notify("No related files found. Check LSP (:lua vim.print(vim.lsp.get_clients())) and Treesitter parsers (:checkhealth nvim-treesitter).", vim.log.levels.WARN, { title = "blast-radius" })
         utils.stats.stop("run")
         return
       end

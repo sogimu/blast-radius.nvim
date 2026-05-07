@@ -262,11 +262,19 @@ function M.build_from_cursor(opts, callback)
   local symbol_name, position = M.get_symbol_at_cursor(bufnr)
   local root_file = vim.api.nvim_buf_get_name(bufnr)
 
+  -- Check LSP support
+  local has_ch = M.has_call_hierarchy_support(bufnr)
+  vim.notify(string.format("LSP callHierarchy: %s, symbol: %s",
+    has_ch and "yes" or "no",
+    symbol_name or "<none>"
+  ), vim.log.levels.DEBUG, { title = "blast-radius" })
+
   if not symbol_name or not position then
     -- Try fallback to includes-based detection
     local ok, includes = pcall(require, "blast_radius.includes")
-    if ok and includes and includes.build_from_cursor then
-      includes.build_from_cursor(opts, callback)
+    if ok and includes and includes.build_from_file then
+      vim.notify("Falling back to include-based detection", vim.log.levels.DEBUG, { title = "blast-radius" })
+      includes.build_from_file(root_file, opts, callback)
     else
       utils.stats.stop("build_from_cursor")
       callback {
